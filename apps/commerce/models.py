@@ -265,10 +265,14 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
 
     @property
     def total_price_cents(self):
+        if self.quantity is None or self.unit_price_cents is None:
+            return 0
         return self.quantity * self.unit_price_cents
 
     @property
     def total_price_points(self):
+        if self.quantity is None or self.unit_price_points is None:
+            return 0
         return self.quantity * self.unit_price_points
 
     def __str__(self):
@@ -584,6 +588,8 @@ class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
 
     @property
     def total_price_cents(self):
+        if self.quantity is None or self.unit_price_cents is None:
+            return 0
         return self.quantity * self.unit_price_cents
 
     def __str__(self):

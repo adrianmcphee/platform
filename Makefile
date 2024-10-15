@@ -18,6 +18,7 @@ FIXTURES = \
     apps/product_management/fixtures/challenge-fixture.csv:product_management.Challenge \
     apps/product_management/fixtures/competition-fixture.csv:product_management.Competition \
     apps/product_management/fixtures/bounty-fixture.csv:product_management.Bounty \
+	apps/product_management/fixtures/bounty-skill-fixture.csv:product_management.BountySkill \
     apps/talent/fixtures/bounty-bid-fixture.csv:talent.BountyBid \
     apps/talent/fixtures/bounty-claim-fixture.csv:talent.BountyClaim \
     apps/talent/fixtures/bounty-delivery-attempt-fixture.csv:talent.BountyDeliveryAttempt \

@@ -79,64 +79,62 @@ class PlatformFeeConfigurationAdmin(admin.ModelAdmin):
 class CartLineItemInline(admin.TabularInline):
     model = CartLineItem
     extra = 0
-    readonly_fields = ("total_price_cents", "total_price_points")
+    readonly_fields = ("total_price_usd", "total_price_points")
+
+    def total_price_usd(self, obj):
+        return f"${obj.total_price_cents / 100:.2f}" if obj.total_price_cents else "$0.00"
+    total_price_usd.short_description = "Total Price (USD)"
+
+    def total_price_points(self, obj):
+        return obj.total_price_points or 0
+    total_price_points.short_description = "Total Price (Points)"
 
 @admin.register(Cart)
 class CartAdmin(admin.ModelAdmin):
-    list_display = ("person", "organisation", "status", "created_at", "total_amount", "country")
+    list_display = ("id", "person", "organisation", "status", "created_at")
     inlines = [CartLineItemInline]
 
-    def total_amount(self, obj):
-        return f"${obj.total_amount:.2f}"
-    total_amount.short_description = "Total Amount"
-
-@admin.register(CartLineItem)
-class CartLineItemAdmin(admin.ModelAdmin):
-    list_display = ("cart", "item_type", "quantity", "unit_price_usd", "unit_price_points", "bounty")
-    list_filter = ("item_type",)
-    search_fields = ("cart__id", "bounty__title")
-
-    def unit_price_usd(self, obj):
-        return f"${obj.unit_price_cents / 100:.2f}"
-    unit_price_usd.short_description = "Unit Price (USD)"
+# Keep the CartLineItemAdmin as is
 
 class SalesOrderLineItemInline(admin.TabularInline):
     model = SalesOrderLineItem
     extra = 0
-    readonly_fields = ("total_price_cents",)
+    readonly_fields = ('total_price',)
+
+    def total_price(self, obj):
+        return f"${obj.total_price_cents / 100:.2f}" if obj.total_price_cents else "$0.00"
+    total_price.short_description = "Total Price"
 
 @admin.register(SalesOrder)
 class SalesOrderAdmin(admin.ModelAdmin):
-    list_display = ("id", "cart", "status", "total_usd", "created_at")
-    list_filter = ("status",)
-    search_fields = ("id", "cart__id")
-    readonly_fields = ("total_usd_cents_including_fees_and_taxes",)
+    list_display = ('id', 'cart', 'status', 'total_amount', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('id', 'cart__id')
     inlines = [SalesOrderLineItemInline]
 
-    def total_usd(self, obj):
+    def total_amount(self, obj):
         return f"${obj.total_usd_cents_including_fees_and_taxes / 100:.2f}"
-    total_usd.short_description = "Total USD"
+    total_amount.short_description = "Total Amount"
 
 @admin.register(SalesOrderLineItem)
 class SalesOrderLineItemAdmin(admin.ModelAdmin):
-    list_display = ("sales_order", "item_type", "quantity", "unit_price_usd", "total_price_usd", "bounty")
-    list_filter = ("item_type",)
-    search_fields = ("sales_order__id", "bounty__title")
+    list_display = ("sales_order", "quantity", "unit_price", "total_price")
+    search_fields = ("sales_order__id",)
 
-    def unit_price_usd(self, obj):
-        return f"${obj.unit_price_cents / 100:.2f}"
-    unit_price_usd.short_description = "Unit Price (USD)"
+    def unit_price(self, obj):
+        return f"${obj.unit_price_cents / 100:.2f}" if obj.unit_price_cents else "$0.00"
+    unit_price.short_description = "Unit Price"
 
-    def total_price_usd(self, obj):
-        return f"${obj.total_price_cents / 100:.2f}"
-    total_price_usd.short_description = "Total Price (USD)"
+    def total_price(self, obj):
+        return f"${obj.total_price_cents / 100:.2f}" if obj.total_price_cents else "$0.00"
+    total_price.short_description = "Total Price"
 
 @admin.register(PointOrder)
 class PointOrderAdmin(admin.ModelAdmin):
-    list_display = ("id", "cart", "product_account", "total_points", "status", "created_at", "parent_order")
+    list_display = ("id", "cart", "status", "created_at", "total_points")
     list_filter = ("status",)
-    search_fields = ("id", "cart__id", "product_account__product__name")
+    search_fields = ("id", "cart__id")
 
     def total_points(self, obj):
-        return f"{obj.total_points:,}"
+        return obj.total_points if hasattr(obj, 'total_points') else 0
     total_points.short_description = "Total Points"
