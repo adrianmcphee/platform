@@ -245,8 +245,8 @@ class BountyBid(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     bounty = models.ForeignKey("product_management.Bounty", on_delete=models.CASCADE, related_name="bids")
     person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="bounty_bids")
-    amount_in_usd_cents = models.IntegerField(null=True, blank=True)
-    amount_in_points = models.IntegerField(null=True, blank=True)
+    amount_in_usd_cents = models.IntegerField(null=True, blank=True, default=None)
+    amount_in_points = models.IntegerField(null=True, blank=True, default=None)
     expected_finish_date = models.DateField()
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     message = models.TextField(blank=True, null=True)
@@ -256,10 +256,10 @@ class BountyBid(TimeStampMixin):
         ordering = ("-created_at",)
 
     def clean(self):
-        if self.bounty.reward_type == 'USD' and self.amount_in_points is not None:
-            raise ValidationError("For USD bounties, amount_in_points should be None")
-        if self.bounty.reward_type == 'Points' and self.amount_in_usd_cents is not None:
-            raise ValidationError("For Points bounties, amount_in_usd_cents should be None")
+        if self.bounty.reward_type == 'USD' and self.amount_in_usd_cents is None:
+            raise ValidationError("For USD bounties, amount_in_usd_cents is required")
+        if self.bounty.reward_type == 'Points' and self.amount_in_points is None:
+            raise ValidationError("For Points bounties, amount_in_points is required")
 
     def __str__(self):
         if self.bounty.reward_type == 'USD':

@@ -16,6 +16,10 @@ from django.core.serializers.json import DjangoJSONEncoder
 
 from django.utils.safestring import mark_safe
 
+from django.core.exceptions import ObjectDoesNotExist
+from django.http import HttpResponse
+from django.db import connection
+
 @admin.register(product.Product)
 class ProductAdmin(admin.ModelAdmin):
     list_display = ["slug", "name", "person", "organisation", "owner_type", "is_private"]
@@ -81,6 +85,11 @@ class ProductAreaAdmin(TreeAdmin):
     list_display = ('name', 'product_tree')
     search_fields = ('name', 'product_tree__name')
 
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not qs.filter(depth=1).exists():
+            ProductArea.add_root(name="Root", product_tree=None)
+        return qs
 
 @admin.register(product.Challenge)
 class ChallengeAdmin(admin.ModelAdmin):

@@ -38,9 +38,9 @@ class BountyBidAdmin(admin.ModelAdmin):
 
     def amount_display(self, obj):
         if obj.bounty.reward_type == 'USD':
-            return f"${obj.amount_in_usd_cents / 100:.2f}"
+            return f"${obj.amount_in_usd_cents / 100:.2f}" if obj.amount_in_usd_cents is not None else "N/A"
         else:
-            return f"{obj.amount_in_points} Points"
+            return f"{obj.amount_in_points} Points" if obj.amount_in_points is not None else "N/A"
     amount_display.short_description = "Amount"
 
 @admin.register(models.Skill)
