@@ -86,27 +86,6 @@ class TimeStampMixin(models.Model):
     class Meta:
         abstract = True
 
-class AncestryMixin(models.Model):
-    class Meta:
-        abstract = True
-
-    def ancestry(self):
-        lineage = []
-        lineage.insert(0, self.name)
-        if self.parent is None:
-            return json.dumps(lineage)
-        else:
-            return __class__.s_ancestry(self.parent, lineage)
-
-    @staticmethod
-    def s_ancestry(obj, lineage):
-        lineage.insert(0, obj.name)
-        if obj.parent is None:
-            return json.dumps(lineage)
-        else:
-            return __class__.s_ancestry(obj.parent, lineage)
-
-
 class VoteMixin(TimeStampMixin):
     VOTE_TYPES = ((0, "Up"), (1, "Down"))
     vote_type = models.IntegerField(choices=VOTE_TYPES)

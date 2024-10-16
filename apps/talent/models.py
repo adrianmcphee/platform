@@ -17,6 +17,7 @@ from django.apps import apps
 from apps.common.mixins import AncestryMixin, TimeStampMixin
 from django.db import transaction
 from django.core.exceptions import ObjectDoesNotExist
+from apps.common.models import TreeNode
 
 
 class Person(TimeStampMixin):
@@ -152,51 +153,31 @@ class PersonSkill(models.Model):
         return f"{self.person} - {self.skill} - {self.expertise}"
 
 
-class Skill(AncestryMixin):
-    id = Base58UUIDv5Field(primary_key=True)
-    parent = models.ForeignKey(
-        "self",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        default=None,
-        related_name="children",
-    )
+class Skill(TreeNode):
     active = models.BooleanField(default=False, db_index=True)
     selectable = models.BooleanField(default=False)
     display_boost_factor = models.PositiveSmallIntegerField(default=1)
-    name = models.CharField(max_length=100, unique=True)
 
     def __str__(self):
         return self.name
 
-    @property
-    def get_children(self):
-        return self.children.filter(active=True)
-
     @classmethod
     def get_roots(cls):
-        return cls.objects.filter(parent=None, active=True)
+        return cls.get_root_nodes()
 
     @staticmethod
     def get_active_skills(active=True, parent=None):
-        return Skill.objects.filter(active=active, parent=parent).all()
+        queryset = Skill.objects.filter(active=active)
+        if parent:
+            queryset = queryset.filter(parent=parent)
+        return queryset
 
     @staticmethod
     def get_active_skill_list(active=True):
-        return Skill.objects.filter(active=active, parent=None).values("id", "name")
+        return Skill.objects.filter(active=active, parent__isnull=True).values("id", "name")
 
 
-class Expertise(AncestryMixin):
-    id = Base58UUIDv5Field(primary_key=True)
-    parent = models.ForeignKey(
-        "self",
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        default=None,
-        related_name="expertise_children",
-    )
+class Expertise(TreeNode):
     skill = models.ForeignKey(
         Skill,
         on_delete=models.SET_NULL,
@@ -206,7 +187,6 @@ class Expertise(AncestryMixin):
         related_name="skill_expertise",
     )
     selectable = models.BooleanField(default=False)
-    name = models.CharField(max_length=100)
     fa_icon = models.CharField(max_length=100)
 
     def __str__(self):
@@ -214,11 +194,7 @@ class Expertise(AncestryMixin):
 
     @classmethod
     def get_roots(cls):
-        return cls.objects.filter(parent=None)
-
-    @property
-    def get_children(self):
-        return self.expertise_children.filter()
+        return cls.get_root_nodes()
 
     @staticmethod
     def get_skill_expertise(skill):
@@ -226,11 +202,14 @@ class Expertise(AncestryMixin):
 
     @staticmethod
     def get_all_expertise(parent=None):
-        return Expertise.objects.filter(parent=parent).all()
+        queryset = Expertise.objects.all()
+        if parent:
+            queryset = queryset.filter(parent=parent)
+        return queryset
 
     @staticmethod
     def get_all_expertise_list():
-        return Expertise.objects.filter(parent=None).values("id", "name")
+        return Expertise.objects.filter(parent__isnull=True).values("id", "name")
 
 
 class BountyBid(TimeStampMixin):
