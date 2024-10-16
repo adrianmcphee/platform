@@ -14,7 +14,7 @@ from django.utils.translation import gettext_lazy as _
 from apps.common.fields import Base58UUIDv5Field
 from apps.common.models import AttachmentAbstract
 from django.apps import apps
-from apps.common.mixins import AncestryMixin, TimeStampMixin
+from apps.common.mixins import TimeStampMixin
 from django.db import transaction
 from django.core.exceptions import ObjectDoesNotExist
 from apps.common.models import TreeNode
