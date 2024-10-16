@@ -11,8 +11,6 @@ from django.dispatch import receiver
 from django.urls import reverse
 from django.utils.translation import gettext_lazy as _
 
-from treebeard.mp_tree import MP_Node
-
 from apps.common.fields import Base58UUIDv5Field
 from apps.common.models import AttachmentAbstract
 from django.apps import apps

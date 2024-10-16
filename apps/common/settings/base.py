@@ -47,8 +47,7 @@ BUILTIN_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    "django.contrib.staticfiles",
-    'treebeard'
+    "django.contrib.staticfiles"
 ]
 
 INSTALLED_APPS = BUILTIN_APPS + ACTUAL_APPS + THIRD_PARTIES

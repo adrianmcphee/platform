@@ -10,15 +10,14 @@ from django.apps import apps
 from django.utils import timezone
 
 from model_utils import FieldTracker
-from treebeard.mp_tree import MP_Node
 
 from apps.common import models as common
 from apps.common.mixins import TimeStampMixin
+from apps.common.fields import Base58UUIDv5Field
 
 from django.core.exceptions import ValidationError
 
 from django.db.models import Sum
-from apps.common.fields import Base58UUIDv5Field
 
 from apps.talent.models import Skill, Expertise
 
@@ -47,7 +46,7 @@ class ProductTree(TimeStampMixin):
         return self.name
 
 
-class ProductArea(common.AttachmentAbstract, MP_Node, TimeStampMixin):
+class ProductArea(common.AttachmentAbstract, common.TreeNode, TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     name = models.CharField(max_length=255)
     description = models.TextField(max_length=1000, blank=True, null=True, default="")
@@ -64,6 +63,9 @@ class ProductArea(common.AttachmentAbstract, MP_Node, TimeStampMixin):
 
     def __str__(self):
         return self.name
+
+    class Meta:
+        ordering = ['path']
 
 
 class Product(TimeStampMixin, common.AttachmentAbstract):

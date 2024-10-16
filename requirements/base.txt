@@ -9,7 +9,6 @@ django-formtools==2.5.1
 django-jinja==2.11.0
 
 django-tinymce==4.1.0
-django-treebeard==4.7.1
 fastapi==0.115.0
 gunicorn==23.0.0
 htmx==0.0.0

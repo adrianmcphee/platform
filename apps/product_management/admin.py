@@ -1,6 +1,4 @@
 from django.contrib import admin
-from treebeard.admin import TreeAdmin
-from treebeard.forms import movenodeform_factory
 
 from apps.product_management import models as product
 from apps.commerce.models import Organisation
@@ -19,6 +17,7 @@ from django.utils.safestring import mark_safe
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpResponse
 from django.db import connection
+from django.db import transaction
 
 @admin.register(product.Product)
 class ProductAdmin(admin.ModelAdmin):
@@ -80,16 +79,51 @@ class ProductTreeAdmin(admin.ModelAdmin):
         )
 
 @admin.register(ProductArea)
-class ProductAreaAdmin(TreeAdmin):
-    form = movenodeform_factory(ProductArea)
-    list_display = ('name', 'product_tree')
+class ProductAreaAdmin(admin.ModelAdmin):
+    list_display = ('name', 'product_tree', 'path')
     search_fields = ('name', 'product_tree__name')
+    raw_id_fields = ('parent', 'product_tree')
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        if not qs.filter(depth=1).exists():
-            ProductArea.add_root(name="Root", product_tree=None)
+        if not qs.filter(parent__isnull=True).exists():
+            with transaction.atomic():
+                ProductArea.objects.create(name="Root", product_tree=None)
         return qs
+
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "parent":
+            kwargs["queryset"] = ProductArea.objects.exclude(id=request.resolver_match.kwargs.get('object_id'))
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:  # New object
+            parent = form.cleaned_data.get('parent')
+            if parent:
+                obj.path = f"{parent.path}/{obj.id}"
+            else:
+                obj.path = obj.id
+        super().save_model(request, obj, form, change)
+
+    def move_node(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(request, "Please select a single node to move.", level='error')
+            return
+
+        node = queryset.first()
+        parent_id = request.POST.get('parent')
+        if parent_id:
+            parent = ProductArea.objects.get(id=parent_id)
+            node.move(parent)
+            self.message_user(request, f"Moved {node.name} under {parent.name}")
+        else:
+            self.message_user(request, "No parent selected for move operation.", level='error')
+
+    move_node.short_description = "Move selected node"
+    actions = [move_node]
+
+    class Media:
+        js = ('admin/js/product_area_admin.js',)  # You'll need to create this JS file
 
 @admin.register(product.Challenge)
 class ChallengeAdmin(admin.ModelAdmin):

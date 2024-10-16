@@ -1,6 +1,7 @@
 from django.urls import path, re_path
 
 from .views import bounties, challenges, products, initiatives, portal, ideas_bugs, product_areas
+from .views.product_area_admin import get_nodes, move_node
 
 urlpatterns = [
     # Bounty-related URLs
@@ -76,4 +77,6 @@ urlpatterns = [
     # Contributor Agreement URLs
     path("<str:product_slug>/contributor-agreement/<int:pk>/", portal.ContributorAgreementTemplateView.as_view(), name="contributor-agreement-template-detail"),
     path("<str:product_slug>/contributor-agreement/create/", portal.CreateContributorAgreementTemplateView.as_view(), name="create-contributor-agreement-template"),
+    path('admin/product_management/productarea/get_nodes/', get_nodes, name='get_product_area_nodes'),
+    path('admin/product_management/productarea/<str:node_id>/move/', move_node, name='move_product_area_node'),
 ]

@@ -5,7 +5,6 @@ from django.conf import settings
 from django.db.models import Q, Prefetch
 from .fields import Base58UUIDv5Field
 
-from apps.common.fields import Base58UUIDv5Field
 
 class AttachmentAbstract(models.Model):
     attachments = models.ManyToManyField("product_management.FileAttachment", blank=True)

@@ -305,37 +305,44 @@ class ProductAreaParser(ModelParser):
     def create_object(self, model, row):
         parsed = self.parse_row(row)
         
-        path = parsed.pop('path')
-        depth = int(parsed.pop('depth'))
-        numchild = int(parsed.pop('numchild'))
-        
         with transaction.atomic():
             # Check if the object already exists
             try:
                 obj = model.objects.get(id=parsed['id'])
                 for key, value in parsed.items():
-                    setattr(obj, key, value)
+                    if key not in ['path', 'parent_id']:  # We'll handle these separately
+                        setattr(obj, key, value)
                 created = False
             except model.DoesNotExist:
                 obj = model(**parsed)
                 created = True
 
-            # Set tree-specific fields
-            obj.depth = depth
-            obj.path = path
-            obj.numchild = numchild
+            # Handle parent relationship
+            if parsed['parent_id']:
+                try:
+                    parent = model.objects.get(id=parsed['parent_id'])
+                    obj.parent = parent
+                except model.DoesNotExist:
+                    print(f"Warning: Parent with id {parsed['parent_id']} does not exist for {obj}.")
+            else:
+                obj.parent = None
 
             # Save the object
             obj.save()
 
-            # If it's a new object and not a root node, set its parent
-            if created and depth > 1:
-                parent_path = path[:-4]
-                try:
-                    parent = model.objects.get(path=parent_path)
-                    obj.move(parent, pos='last-child')
-                except model.DoesNotExist:
-                    print(f"Warning: Parent with path {parent_path} does not exist for {obj}.")
+            # Verify and update path if necessary
+            expected_path = obj.parent.path + '/' + obj.id if obj.parent else obj.id
+            if obj.path != expected_path:
+                obj.path = expected_path
+                obj.save(update_fields=['path'])
+
+            # Update children paths if necessary
+            children = obj.get_descendants()
+            for child in children:
+                child_expected_path = obj.path + child.path[len(obj.path):]
+                if child.path != child_expected_path:
+                    child.path = child_expected_path
+                    child.save(update_fields=['path'])
 
         return obj, created
     
