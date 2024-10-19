@@ -467,16 +467,14 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
     cart = models.ForeignKey("Cart", related_name="items", on_delete=models.CASCADE)
     item_type = models.CharField(max_length=25, choices=ItemType.choices)
     quantity = models.PositiveIntegerField(default=1)
-    unit_price_cents = models.IntegerField()
+    unit_price_cents = models.IntegerField(default=0)
     unit_price_points = models.PositiveIntegerField(default=0)
     bounty = models.ForeignKey("product_management.Bounty", on_delete=models.SET_NULL, null=True, blank=True)
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
 
     @property
     def total_price_cents(self):
-        if self.quantity is None or self.unit_price_cents is None:
-            return 0
-        return self.quantity * self.unit_price_cents
+        return self.unit_price_cents * self.quantity
 
     @property
     def total_price_points(self):
@@ -496,6 +494,11 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
         super().clean()
 
     def save(self, *args, **kwargs):
+        if not self.unit_price_cents and hasattr(self, 'bounty') and self.bounty:
+            if hasattr(self.bounty, 'reward_in_usd_cents'):
+                self.unit_price_cents = self.bounty.reward_in_usd_cents
+            elif hasattr(self.bounty, 'final_reward_in_usd_cents'):
+                self.unit_price_cents = self.bounty.final_reward_in_usd_cents
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -665,6 +668,11 @@ class Cart(TimeStampMixin):
     @property
     def total_amount(self):
         return self.total_amount_cents / 100
+
+    def total_usd_cents(self):
+        total = sum(item.total_price_cents for item in self.items.all())
+        print(f"Cart {self.id} total: {total} cents")
+        return total
 
 
 class SalesOrder(TimeStampMixin):
@@ -1055,3 +1063,8 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
         if not crypto_wallet_address:
             raise ValueError("Crypto wallet address is required for contributor USDT withdrawals.")
         return True
+
+
+
+
+
