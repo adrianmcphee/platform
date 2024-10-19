@@ -924,7 +924,7 @@ class USDTPaymentStrategy(PaymentStrategy):
 
 class WithdrawalRequest(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
-    contributor_wallet = models.ForeignKey("commerece.ContributorWallet", on_delete=models.CASCADE, related_name="withdrawal_requests")
+    contributor_wallet = models.ForeignKey("commerce.ContributorWallet", on_delete=models.CASCADE, related_name="withdrawal_requests")
     amount_cents = models.PositiveIntegerField()
     status = models.CharField(max_length=20, choices=[
         ('Pending', 'Pending'),
