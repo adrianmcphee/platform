@@ -96,16 +96,23 @@ class OrganisationWalletTransaction(TimeStampMixin):
         CREDIT = "Credit", "Credit"
         DEBIT = "Debit", "Debit"
 
+    class PaymentMethod(models.TextChoices):
+        PAYPAL = "PayPal", "PayPal"
+        USDT = "USDT", "USDT"
+        CREDIT_CARD = "CreditCard", "Credit Card"
+        ORGANISATION_WALLET = "OrganisationWallet", "Organisation Wallet"  # For debiting from the wallet directly
+
     id = Base58UUIDv5Field(primary_key=True)
     wallet = models.ForeignKey(OrganisationWallet, on_delete=models.CASCADE, related_name="transactions")
-    amount_cents = models.IntegerField()
+    amount_cents = models.IntegerField()  # Storing amount in cents for better precision
     transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
     description = models.TextField()
     related_order = models.ForeignKey("SalesOrder", null=True, blank=True, on_delete=models.SET_NULL)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)  # External transaction ID (e.g., PayPal or crypto transaction hash)
 
     def __str__(self):
         return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.organisation.name}"
-
 
 class OrganisationPointAccount(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
