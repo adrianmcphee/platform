@@ -242,6 +242,17 @@ class ContributorWallet(TimeStampMixin):
         # Format the balance as dollars for readability
         return f"Wallet for {self.person.full_name} - USD: ${self.balance_usd_in_cents / 100:.2f}"
     
+    def add_funds(self, amount_cents):
+        self.balance_usd_in_cents += amount_cents
+        self.save()
+
+    def deduct_funds(self, amount_cents):
+        if self.balance_usd_in_cents >= amount_cents:
+            self.balance_usd_in_cents -= amount_cents
+            self.save()
+            return True
+        return False
+    
 class ContributorPointAccount(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     person = models.OneToOneField('talent.Person', on_delete=models.CASCADE, related_name="point_account")
@@ -249,6 +260,10 @@ class ContributorPointAccount(TimeStampMixin):
 
     def __str__(self):
         return f"Point Account for {self.person.full_name} - Points: {self.balance_points}"
+
+    def add_points(self, amount_points):
+        self.balance_points += amount_points
+        self.save()
 
 
 class PlatformFeeConfiguration(TimeStampMixin):
