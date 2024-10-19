@@ -324,6 +324,55 @@ class ContributorWallet(TimeStampMixin):
         return False
 
 
+class ContributorWalletTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        CREDIT = "Credit", "Credit"
+        DEBIT = "Debit", "Debit"
+        WITHDRAWAL = "Withdrawal", "Withdrawal"
+
+    class PaymentMethod(models.TextChoices):
+        PAYPAL = "PayPal", "PayPal"
+        USDT = "USDT", "USDT"
+        CREDIT_CARD = "CreditCard", "Credit Card"
+        CONTRIBUTOR_WALLET = "ContributorWallet", "Contributor Wallet"
+
+    class Status(models.TextChoices):
+        PENDING = "Pending", "Pending"
+        COMPLETED = "Completed", "Completed"
+        FAILED = "Failed", "Failed"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    wallet = models.ForeignKey(ContributorWallet, on_delete=models.CASCADE, related_name="transactions")
+    amount_cents = models.IntegerField()  # Amount stored as cents for precision
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)  # External transaction ID
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.person.full_name}"
+
+    def process(self):
+        if self.status != self.Status.PENDING:
+            return False
+
+        try:
+            if self.transaction_type == self.TransactionType.CREDIT:
+                self.wallet.add_funds(self.amount_cents)
+            elif self.transaction_type in [self.TransactionType.DEBIT, self.TransactionType.WITHDRAWAL]:
+                if not self.wallet.deduct_funds(self.amount_cents):
+                    raise ValueError("Insufficient funds")
+            
+            self.status = self.Status.COMPLETED
+            self.save()
+            return True
+        except Exception as e:
+            self.status = self.Status.FAILED
+            self.save()
+            raise e
+
+
 class ContributorPointAccount(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     person = models.OneToOneField("talent.Person", on_delete=models.CASCADE, related_name="point_account")
@@ -335,33 +384,6 @@ class ContributorPointAccount(TimeStampMixin):
     def add_points(self, amount_points):
         self.balance_points += amount_points
         self.save()
-
-
-class ContributorWalletTransaction(TimeStampMixin):
-    class TransactionType(models.TextChoices):
-        CREDIT = "Credit", "Credit"
-        DEBIT = "Debit", "Debit"
-
-    class PaymentMethod(models.TextChoices):
-        PAYPAL = "PayPal", "PayPal"
-        USDT = "USDT", "USDT"
-        CREDIT_CARD = "CreditCard", "Credit Card"
-        CONTRIBUTOR_WALLET = "ContributorWallet", "Contributor Wallet"  # For internal debits from the wallet
-
-    id = Base58UUIDv5Field(primary_key=True)
-    wallet = models.ForeignKey(ContributorWallet, on_delete=models.CASCADE, related_name="transactions")
-    amount_cents = models.IntegerField()  # Amount stored as cents for precision
-    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
-    description = models.TextField()
-
-    # Fields for payment method and external transaction tracking
-    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
-    transaction_id = models.CharField(
-        max_length=255, null=True, blank=True
-    )  # External transaction ID (PayPal, USDT, etc.)
-
-    def __str__(self):
-        return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.person.full_name}"
 
 
 class ContributorPointTransaction(TimeStampMixin):
@@ -999,55 +1021,3 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
         if not crypto_wallet_address:
             raise ValueError("Crypto wallet address is required for contributor USDT withdrawals.")
         return True
-
-
-class ContributorWithdrawalRequest(TimeStampMixin):
-    id = Base58UUIDv5Field(primary_key=True)
-    contributor_wallet = models.ForeignKey(
-        "commerce.ContributorWallet", on_delete=models.CASCADE, related_name="withdrawal_requests"
-    )
-    amount_cents = models.PositiveIntegerField()
-    status = models.CharField(
-        max_length=20,
-        choices=[("Pending", "Pending"), ("Completed", "Completed"), ("Failed", "Failed")],
-        default="Pending",
-    )
-    payment_method = models.CharField(max_length=20, choices=[("PayPal", "PayPal"), ("USDT", "USDT")])
-    transaction_id = models.CharField(max_length=255, null=True, blank=True)
-
-    def __str__(self):
-        return f"Contributor withdrawal of ${self.amount_cents / 100:.2f} via {self.payment_method}"
-
-    def process(self):
-        strategy = self.get_withdrawal_strategy()
-        try:
-            strategy.validate_withdrawal(**self.get_validation_kwargs())
-            strategy.process_withdrawal(self.contributor_wallet, self.amount_cents, **self.get_processing_kwargs())
-            self.status = "Completed"
-            self.save()
-        except Exception as e:
-            self.status = "Failed"
-            self.save()
-            raise e
-
-    def get_withdrawal_strategy(self):
-        if self.payment_method == "PayPal":
-            return ContributorPayPalWithdrawalStrategy()
-        elif self.payment_method == "USDT":
-            return ContributorUSDTWithdrawalStrategy()
-        else:
-            raise ValueError(f"Unsupported payment method for contributor withdrawal: {self.payment_method}")
-
-    def get_validation_kwargs(self):
-        # Return appropriate kwargs for validation based on payment method
-        if self.payment_method == "PayPal":
-            return {"paypal_email": self.contributor_wallet.person.paypal_email}
-        elif self.payment_method == "USDT":
-            return {"crypto_wallet_address": self.contributor_wallet.person.crypto_wallet_address}
-        return {}
-
-    def get_processing_kwargs(self):
-        # Return appropriate kwargs for processing based on payment method
-        if self.payment_method == "USDT":
-            return {"crypto_wallet_address": self.contributor_wallet.person.crypto_wallet_address}
-        return {}
