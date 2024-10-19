@@ -947,7 +947,61 @@ class USDTPaymentStrategy(PaymentStrategy):
         return True
 
 
-class WithdrawalRequest(TimeStampMixin):
+class ContributorWithdrawalStrategy(ABC):
+    @abstractmethod
+    def process_withdrawal(self, contributor_wallet, amount_cents, **kwargs):
+        """
+        Processes the contributor withdrawal and updates the ContributorWalletTransaction.
+        """
+        pass
+
+    @abstractmethod
+    def validate_withdrawal(self, **kwargs):
+        """
+        Validates contributor withdrawal details before processing.
+        """
+        pass
+
+
+class ContributorPayPalWithdrawalStrategy(ContributorWithdrawalStrategy):
+    def process_withdrawal(self, contributor_wallet, amount_cents, **kwargs):
+        print(f"Processing contributor PayPal withdrawal of ${amount_cents / 100:.2f}")
+
+        ContributorWalletTransaction = apps.get_model("commerce", "ContributorWalletTransaction")
+        ContributorWalletTransaction.objects.create(
+            wallet=contributor_wallet,
+            amount_cents=amount_cents,
+            transaction_type="Debit",
+            payment_method="PayPal",
+            transaction_id="PayPal-Withdrawal-ID",
+        )
+
+    def validate_withdrawal(self, paypal_email, **kwargs):
+        if not paypal_email:
+            raise ValueError("PayPal email is required for contributor PayPal withdrawals.")
+        return True
+
+
+class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
+    def process_withdrawal(self, contributor_wallet, amount_cents, crypto_wallet_address, **kwargs):
+        print(f"Processing contributor USDT withdrawal of ${amount_cents / 100:.2f} to wallet {crypto_wallet_address}")
+
+        ContributorWalletTransaction = apps.get_model("commerce", "ContributorWalletTransaction")
+        ContributorWalletTransaction.objects.create(
+            wallet=contributor_wallet,
+            amount_cents=amount_cents,
+            transaction_type="Debit",
+            payment_method="USDT",
+            transaction_id="USDT-Withdrawal-Hash",
+        )
+
+    def validate_withdrawal(self, crypto_wallet_address, **kwargs):
+        if not crypto_wallet_address:
+            raise ValueError("Crypto wallet address is required for contributor USDT withdrawals.")
+        return True
+
+
+class ContributorWithdrawalRequest(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     contributor_wallet = models.ForeignKey(
         "commerce.ContributorWallet", on_delete=models.CASCADE, related_name="withdrawal_requests"
@@ -962,54 +1016,38 @@ class WithdrawalRequest(TimeStampMixin):
     transaction_id = models.CharField(max_length=255, null=True, blank=True)
 
     def __str__(self):
-        return f"Withdrawal of ${self.amount_cents / 100:.2f} via {self.payment_method}"
+        return f"Contributor withdrawal of ${self.amount_cents / 100:.2f} via {self.payment_method}"
 
     def process(self):
-        # Process the withdrawal via the appropriate strategy
+        strategy = self.get_withdrawal_strategy()
+        try:
+            strategy.validate_withdrawal(**self.get_validation_kwargs())
+            strategy.process_withdrawal(self.contributor_wallet, self.amount_cents, **self.get_processing_kwargs())
+            self.status = "Completed"
+            self.save()
+        except Exception as e:
+            self.status = "Failed"
+            self.save()
+            raise e
+
+    def get_withdrawal_strategy(self):
         if self.payment_method == "PayPal":
-            PayPalWithdrawalRequest().process(self)
+            return ContributorPayPalWithdrawalStrategy()
         elif self.payment_method == "USDT":
-            USDTWithdrawalRequest().process(self)
+            return ContributorUSDTWithdrawalStrategy()
+        else:
+            raise ValueError(f"Unsupported payment method for contributor withdrawal: {self.payment_method}")
 
+    def get_validation_kwargs(self):
+        # Return appropriate kwargs for validation based on payment method
+        if self.payment_method == "PayPal":
+            return {"paypal_email": self.contributor_wallet.person.paypal_email}
+        elif self.payment_method == "USDT":
+            return {"crypto_wallet_address": self.contributor_wallet.person.crypto_wallet_address}
+        return {}
 
-class PayPalWithdrawalRequest:
-
-    def process(self, withdrawal_request):
-        # Simulate PayPal withdrawal (replace with PayPal API integration)
-        print(f"Processing PayPal withdrawal of ${withdrawal_request.amount_cents / 100:.2f}")
-
-        ContributorWalletTransaction = apps.get_model("commerce", "ContributorWalletTransaction")
-
-        # Update ContributorWalletTransaction
-        ContributorWalletTransaction.objects.create(
-            wallet=withdrawal_request.contributor_wallet,
-            amount_cents=withdrawal_request.amount_cents,
-            transaction_type="Debit",
-            payment_method="PayPal",
-            transaction_id="PayPal-Withdrawal-ID",
-        )
-
-        # Mark the withdrawal as completed
-        withdrawal_request.status = "Completed"
-        withdrawal_request.save()
-
-
-class USDTWithdrawalRequest:
-
-    def process(self, withdrawal_request):
-        # Simulate USDT withdrawal (replace with blockchain integration)
-        print(f"Processing USDT withdrawal of ${withdrawal_request.amount_cents / 100:.2f}")
-
-        ContributorWalletTransaction = apps.get_model("commerce", "ContributorWalletTransaction")
-        # Update ContributorWalletTransaction
-        ContributorWalletTransaction.objects.create(
-            wallet=withdrawal_request.contributor_wallet,
-            amount_cents=withdrawal_request.amount_cents,
-            transaction_type="Debit",
-            payment_method="USDT",
-            transaction_id="USDT-Withdrawal-Hash",
-        )
-
-        # Mark the withdrawal as completed
-        withdrawal_request.status = "Completed"
-        withdrawal_request.save()
+    def get_processing_kwargs(self):
+        # Return appropriate kwargs for processing based on payment method
+        if self.payment_method == "USDT":
+            return {"crypto_wallet_address": self.contributor_wallet.person.crypto_wallet_address}
+        return {}
