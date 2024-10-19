@@ -233,34 +233,64 @@ class OrganisationPointGrant(TimeStampMixin):
             description=f"Grant: {self.rationale}",
         )
 
-class OrganisationPointGrantRequest(models.Model):
-    organisation = models.ForeignKey('Organisation', on_delete=models.CASCADE)
-    organisation_point_account = models.ForeignKey('OrganisationPointAccount', on_delete=models.CASCADE)
-    requested_points = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=50, choices=[
+class OrganisationPointGrantRequest(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grant_requests")
+    amount_points = models.PositiveIntegerField()
+    requested_by = models.ForeignKey('talent.Person', on_delete=models.SET_NULL, null=True, related_name="point_grant_requests")
+    rationale = models.TextField()
+    status = models.CharField(max_length=20, choices=[
         ('Pending', 'Pending'),
         ('Approved', 'Approved'),
         ('Rejected', 'Rejected')
-    ])
-    created_at = models.DateTimeField(auto_now_add=True)
-    processed_at = models.DateTimeField(null=True, blank=True)
+    ], default='Pending')
 
-    def __str__(self):
-        return f"{self.organisation.name} - {self.requested_points} points request"
+    def approve(self):
+        if self.status == 'Pending':
+            self.status = 'Approved'
+            self.save()
+            # Add points to the organisation's point account
+            self.organisation.point_account.add_points(self.amount_points)
+            PointTransaction.objects.create(
+                account=self.organisation.point_account,
+                amount=self.amount_points,
+                transaction_type="GRANT",
+                description=f"Grant for organisation: {self.organisation.name}"
+            )
 
-class ProductPointRequest(models.Model):
-    product_account = models.ForeignKey('ProductPointAccount', on_delete=models.CASCADE)
-    requested_points = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=50, choices=[
+    def reject(self):
+        if self.status == 'Pending':
+            self.status = 'Rejected'
+            self.save()
+
+class ProductPointRequest(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    product = models.ForeignKey('product_management.Product', on_delete=models.CASCADE, related_name="point_requests")
+    amount_points = models.PositiveIntegerField()
+    requested_by = models.ForeignKey('talent.Person', on_delete=models.SET_NULL, null=True, related_name="product_point_requests")
+    status = models.CharField(max_length=20, choices=[
         ('Pending', 'Pending'),
         ('Approved', 'Approved'),
         ('Rejected', 'Rejected')
-    ])
-    created_at = models.DateTimeField(auto_now_add=True)
-    processed_at = models.DateTimeField(null=True, blank=True)
+    ], default='Pending')
 
-    def __str__(self):
-        return f"{self.product_account.product.name} - {self.requested_points} points request"
+    def approve(self):
+        if self.status == 'Pending':
+            self.status = 'Approved'
+            self.save()
+            # Add points to the product's point account
+            self.product.product_point_account.add_points(self.amount_points)
+            PointTransaction.objects.create(
+                product_account=self.product.product_point_account,
+                amount=self.amount_points,
+                transaction_type="GRANT",
+                description=f"Grant for product: {self.product.name}"
+            )
+
+    def reject(self):
+        if self.status == 'Pending':
+            self.status = 'Rejected'
+            self.save()
 
 
 class ContributorWallet(TimeStampMixin):
