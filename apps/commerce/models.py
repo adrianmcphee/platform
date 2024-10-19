@@ -650,6 +650,7 @@ class SalesOrder(TimeStampMixin):
     total_fees_usd_cents = models.PositiveIntegerField(default=0)
     total_taxes_usd_cents = models.PositiveIntegerField(default=0)
     total_usd_cents_including_fees_and_taxes = models.PositiveIntegerField(default=0)
+    parent_order = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='child_orders')
 
     def __str__(self):
         return f"Sales Order {self.id} for Cart {self.cart.id}"
@@ -785,7 +786,7 @@ class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
 
     def clean(self):
         if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
-            if not self.sales_order.parent_sales_order:
+            if not self.sales_order.parent_order:
                 raise ValidationError(
                     "Adjustment line items must be associated with a sales order that has a parent order."
                 )
