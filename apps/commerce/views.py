@@ -4,67 +4,130 @@ from django.contrib import messages
 from django.views.generic import ListView, DetailView
 from django.utils.decorators import method_decorator
 from django.db import transaction
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 import logging
+from unittest.mock import MagicMock
+
+from apps.product_management.forms import BountyForm
+from django.views.decorators.http import require_http_methods
 
 from .models import (
-    Cart, SalesOrder, OrganisationWallet, PayPalPaymentStrategy, USDTPaymentStrategy,
+    Cart, CartLineItem, SalesOrder, SalesOrderLineItem,OrganisationWallet, PayPalPaymentStrategy, USDTPaymentStrategy,
     ContributorWallet, ContributorPayPalWithdrawalStrategy, ContributorUSDTWithdrawalStrategy
 )
-from apps.product_management.models import Bounty
+from apps.product_management.models import Bounty, Product
 from apps.security.models import OrganisationPersonRoleAssignment
+from apps.security.models import Person
+from .forms import AddToCartForm  # Add this import
 
 logger = logging.getLogger(__name__)
 
 @login_required
 def bounty_checkout(request):
-    cart = Cart.objects.get(person=request.user.person, status='Open')
+    cart = Cart.objects.get(person=request.user.person, status=Cart.CartStatus.OPEN)
+    wallet = OrganisationWallet.objects.get(organisation=cart.organisation)
     
-    # Get the organisation associated with the person
-    org_assignment = OrganisationPersonRoleAssignment.objects.filter(person=request.user.person).first()
+    logger.info(f"Starting checkout for cart {cart.id}")
     
-    if not org_assignment:
-        logger.debug("No organisation assignment found")
-        return redirect('no_organisation_error')  # Create this view and URL
+    if cart.total_usd_cents_including_fees_and_taxes > wallet.balance_usd_cents:
+        logger.warning(f"Insufficient balance for checkout. Cart total: {cart.total_usd_cents_including_fees_and_taxes}, Wallet balance: {wallet.balance_usd_cents}")
+        return redirect('commerce:checkout_failure')
     
-    organisation = org_assignment.organisation
+    sales_order = SalesOrder.objects.create(
+        cart=cart,
+        organisation=cart.organisation,
+        total_usd_cents_excluding_fees_and_taxes=cart.total_usd_cents_excluding_fees_and_taxes,
+        total_fees_usd_cents=cart.total_fees_usd_cents,
+        total_taxes_usd_cents=cart.total_taxes_usd_cents,
+        total_usd_cents_including_fees_and_taxes=cart.total_usd_cents_including_fees_and_taxes,
+        status=SalesOrder.OrderStatus.PENDING
+    )
     
-    logger.debug(f"Cart total: {cart.total_usd_cents()}, Wallet balance: {organisation.wallet.balance_usd_cents}")
-    
-    # Check if the wallet has sufficient balance
-    if cart.total_usd_cents() <= organisation.wallet.balance_usd_cents:
-        logger.debug("Sufficient balance, creating sales order")
-        # Create the SalesOrder
-        sales_order = SalesOrder.objects.create(
-            cart=cart,
-            organisation=organisation,
-            status='Completed',
-            total_usd_cents_excluding_fees_and_taxes=cart.total_usd_cents(),
-            total_fees_usd_cents=0,  # You may want to calculate this
-            total_taxes_usd_cents=0,  # You may want to calculate this
-        )
-        
-        # Update the cart status
-        cart.status = 'Closed'
-        cart.save()
-        
-        # Deduct the amount from the wallet
-        wallet = organisation.wallet
-        wallet.balance_usd_cents -= cart.total_usd_cents()
+    if sales_order.process_payment():
+        logger.info(f"Payment processed successfully for sales order {sales_order.id}")
+        wallet.balance_usd_cents -= cart.total_usd_cents_including_fees_and_taxes
         wallet.save()
-        
-        logger.debug("Redirecting to checkout success")
-        return redirect('checkout_success')
+        cart.status = Cart.CartStatus.CHECKED_OUT
+        cart.save()
+        sales_order.status = SalesOrder.OrderStatus.COMPLETED
+        sales_order.save()
+        return redirect('commerce:checkout_success')
     else:
-        logger.debug("Insufficient balance, redirecting to wallet top-up")
-        return redirect('wallet_top_up')
+        logger.error(f"Payment processing failed for sales order {sales_order.id}")
+        return redirect('commerce:checkout_failure')
 
 @login_required
 def wallet_top_up(request):
-    # For now, we'll just render a simple template
-    # You can implement the actual top-up logic later
-    return render(request, 'commerce/wallet_top_up.html')
+    if request.method == 'POST':
+        amount = request.POST.get('amount')
+        try:
+            amount_cents = int(float(amount) * 100)
+            if amount_cents <= 0:
+                return HttpResponse("Invalid amount")
+            # Implement the logic to top up the wallet
+            return HttpResponse("Wallet top-up request received")
+        except ValueError:
+            return HttpResponse("Invalid amount")
+    return HttpResponse("Invalid request method")
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def add_to_cart(request):
+    if request.method == "POST":
+        form = AddToCartForm(request.POST)
+        if form.is_valid():
+            try:
+                product = form.cleaned_data['product']
+                bounty = form.cleaned_data['bounty']
+                
+                # Get the organisation from the product
+                organisation = product.organisation
+                if not organisation:
+                    raise ValueError("Product does not have an associated organisation")
+                
+                cart, created = Cart.objects.get_or_create(
+                    person=request.user.person,
+                    organisation=organisation,
+                    status=Cart.CartStatus.OPEN,
+                    defaults={'country': organisation.country}
+                )
+                
+                CartLineItem.objects.create(
+                    cart=cart,
+                    item_type=CartLineItem.ItemType.BOUNTY,
+                    quantity=1,
+                    unit_price_usd_cents=bounty.reward_in_usd_cents if bounty.reward_type == 'USD' else None,
+                    unit_price_points=bounty.reward_in_points if bounty.reward_type == 'POINTS' else None,
+                    bounty=bounty,
+                    funding_type=bounty.reward_type
+                )
+                
+                cart.update_totals()
+                logger.info(f"Item added to cart {cart.id} successfully")
+                return redirect('commerce:view_cart')
+            except Exception as e:
+                logger.error(f"Error adding item to cart: {str(e)}")
+                form.add_error(None, "An error occurred while adding the item to the cart.")
+        else:
+            logger.warning(f"Invalid form data: {form.errors}")
+    else:
+        form = AddToCartForm()
+    
+    return render(request, 'add_to_cart.html', {'form': form})
+
+@login_required
+def view_cart(request):
+    # Implement the logic to view the cart
+    return render(request, 'commerce/view_cart.html')
 
 @login_required
 def checkout_success(request):
-    return render(request, 'commerce/checkout_success.html')
+    return render(request, 'checkout_success.html')
+
+@login_required
+def checkout_failure(request):
+    return render(request, 'checkout_failure.html')
+
+@login_required
+def wallet_success(request):
+    return render(request, 'wallet_success.html')

@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Your Cart</h1>
+{% if cart %}
+  <!-- Display cart items -->
+{% else %}
+  <p>Your cart is empty.</p>
+{% endif %}
+{% endblock %}

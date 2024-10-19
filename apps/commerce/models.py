@@ -13,12 +13,16 @@ from django.apps import apps
 from django.db import transaction
 from abc import ABC, abstractmethod
 from apps.common.models import TreeNode
+from django.utils.translation import gettext_lazy as _
 
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Organisation(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     name = models.CharField(max_length=512, unique=True)
-    country = models.CharField(max_length=2, help_text="ISO 3166-1 alpha-2 country code")
+    country = models.CharField(max_length=2, default='US', help_text="ISO 3166-1 alpha-2 country code")
     tax_id = models.CharField(max_length=50, blank=True, null=True, help_text="Tax Identification Number")
 
     def clean(self):
@@ -467,20 +471,41 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
     cart = models.ForeignKey("Cart", related_name="items", on_delete=models.CASCADE)
     item_type = models.CharField(max_length=25, choices=ItemType.choices)
     quantity = models.PositiveIntegerField(default=1)
-    unit_price_cents = models.IntegerField(default=0)
-    unit_price_points = models.PositiveIntegerField(default=0)
-    bounty = models.ForeignKey("product_management.Bounty", on_delete=models.SET_NULL, null=True, blank=True)
+    unit_price_usd_cents = models.PositiveIntegerField(null=True, blank=True)
+    unit_price_points = models.PositiveIntegerField(null=True, blank=True)
+    bounty = models.ForeignKey("product_management.Bounty", on_delete=models.CASCADE, related_name='cart_items')
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
+    funding_type = models.CharField(max_length=10, choices=[('USD', 'USD'), ('POINTS', 'Points')], default='USD')
+
+    def clean(self):
+        super().clean()
+        if self.bounty:
+            if self.bounty.reward_type == 'USD' and self.unit_price_points:
+                raise ValidationError("USD bounties should not have point prices.")
+            elif self.bounty.reward_type == 'POINTS' and self.unit_price_usd_cents:
+                raise ValidationError("Point bounties should not have USD prices.")
+            
+            if self.funding_type != self.bounty.reward_type:
+                raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
+
+    def save(self, *args, **kwargs):
+        if self.bounty:
+            self.funding_type = self.bounty.reward_type
+            if self.funding_type == 'USD':
+                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
+                self.unit_price_points = None
+            else:  # POINTS
+                self.unit_price_points = self.bounty.reward_in_points
+                self.unit_price_usd_cents = None
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     @property
-    def total_price_cents(self):
-        return self.unit_price_cents * self.quantity
-
-    @property
-    def total_price_points(self):
-        if self.quantity is None or self.unit_price_points is None:
-            return 0
-        return self.quantity * self.unit_price_points
+    def total_price(self):
+        if self.funding_type == 'USD':
+            return self.unit_price_usd_cents * self.quantity
+        else:  # POINTS
+            return self.unit_price_points * self.quantity
 
     def __str__(self):
         return f"{self.get_item_type_display()} for Cart {self.cart.id}"
@@ -492,13 +517,17 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
         elif self.related_bounty_bid:
             raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
         super().clean()
+        if self.bounty and self.funding_type != self.bounty.reward_type:
+            raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
 
     def save(self, *args, **kwargs):
-        if not self.unit_price_cents and hasattr(self, 'bounty') and self.bounty:
+        if not self.unit_price_usd_cents and hasattr(self, 'bounty') and self.bounty:
             if hasattr(self.bounty, 'reward_in_usd_cents'):
-                self.unit_price_cents = self.bounty.reward_in_usd_cents
+                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
             elif hasattr(self.bounty, 'final_reward_in_usd_cents'):
-                self.unit_price_cents = self.bounty.final_reward_in_usd_cents
+                self.unit_price_usd_cents = self.bounty.final_reward_in_usd_cents
+        if self.bounty and not self.funding_type:
+            self.funding_type = self.bounty.reward_type
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -508,88 +537,57 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
 
 class Cart(TimeStampMixin):
     class CartStatus(models.TextChoices):
-        OPEN = "Open", "Open"
-        CHECKOUT = "Checkout", "Checkout"
-        COMPLETED = "Completed", "Completed"
-        ABANDONED = "Abandoned", "Abandoned"
+        OPEN = "OPEN", _("Open")
+        CHECKED_OUT = "CHECKED_OUT", _("Checked Out")
+        ABANDONED = "ABANDONED", _("Abandoned")
 
     id = Base58UUIDv5Field(primary_key=True)
-    person = models.ForeignKey("talent.Person", on_delete=models.SET_NULL, null=True, blank=True)
-    organisation = models.ForeignKey(Organisation, on_delete=models.SET_NULL, null=True, blank=True)
-    status = models.CharField(max_length=20, choices=CartStatus.choices, default=CartStatus.OPEN)
+    person = models.ForeignKey("talent.Person", on_delete=models.CASCADE, related_name="carts")
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="carts")
+    status = models.CharField(
+        max_length=20,
+        choices=CartStatus.choices,
+        default=CartStatus.OPEN,
+    )
     country = models.CharField(max_length=2, help_text="ISO 3166-1 alpha-2 country code of the user")
+
+    total_usd_cents_excluding_fees_and_taxes = models.PositiveIntegerField(default=0)
+    total_fees_usd_cents = models.PositiveIntegerField(default=0)
+    total_taxes_usd_cents = models.PositiveIntegerField(default=0)
+    total_usd_cents_including_fees_and_taxes = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         return f"Cart {self.id} - ({self.status})"
 
     def calculate_platform_fee(self):
-        PlatformFeeConfiguration = apps.get_model("commerce", "PlatformFeeConfiguration")
-        SalesOrderLineItem = apps.get_model("commerce", "SalesOrderLineItem")
+        total_usd_cents = self.total_usd_cents
+        platform_fee_cents, _ = self.calculate_platform_fee_rate(total_usd_cents)
+        return platform_fee_cents
 
-        usd_items = self.sales_order.line_items.filter(item_type=SalesOrderLineItem.ItemType.BOUNTY)
-        if usd_items.exists():
-            config = PlatformFeeConfiguration.get_active_configuration()
-            if config:
-                total_usd_cents = usd_items.aggregate(total=Sum("unit_price_cents"))["total"] or 0
-                fee_amount_cents = int(total_usd_cents * config.percentage_decimal)
-
-                # Create or update the platform fee line item
-                SalesOrderLineItem.objects.update_or_create(
-                    sales_order=self.sales_order,
-                    item_type=SalesOrderLineItem.ItemType.PLATFORM_FEE,
-                    defaults={
-                        "unit_price_cents": fee_amount_cents,
-                        "fee_rate": config.percentage_decimal,
-                        "quantity": 1,
-                    },
-                )
-                return fee_amount_cents, config.percentage_decimal
+    def calculate_platform_fee_rate(self, total_usd_cents):
+        # Implement the platform fee calculation logic here
+        # This is a placeholder implementation, adjust as needed
+        if total_usd_cents < 10000:  # Less than $100
+            return int(total_usd_cents * 0.1), 0.1  # 10% fee
         else:
-            # Remove platform fee if no USD items
-            self.sales_order.line_items.filter(item_type=SalesOrderLineItem.ItemType.PLATFORM_FEE).delete()
-        return 0, 0
+            return int(total_usd_cents * 0.05), 0.05  # 5% fee
 
     def calculate_sales_tax(self):
-        SalesOrderLineItem = apps.get_model("commerce", "SalesOrderLineItem")
+        # Implement sales tax calculation logic here
+        # This is a placeholder, adjust as needed
+        return 0
 
-        taxable_amount = self.total_usd_cents()
-
-        if self.organisation:
-            tax_rate = self.get_organisation_tax_rate()
-        elif self.is_user_in_europe():
-            tax_rate = self.get_default_european_tax_rate()
-        else:
-            tax_rate = 0
-
-        tax_amount = int(taxable_amount * tax_rate)
-
-        if tax_amount > 0:
-            SalesOrderLineItem.objects.update_or_create(
-                sales_order=self.sales_order,
-                item_type=SalesOrderLineItem.ItemType.SALES_TAX,
-                defaults={"unit_price_cents": tax_amount, "tax_rate": tax_rate, "quantity": 1},
-            )
-        else:
-            self.sales_order.line_items.filter(item_type=SalesOrderLineItem.ItemType.SALES_TAX).delete()
-
-        return tax_amount, tax_rate
-
+    @property
     def total_usd_cents(self):
-        SalesOrderLineItem = apps.get_model("commerce", "SalesOrderLineItem")
-        return (
-            self.sales_order.line_items.filter(item_type=SalesOrderLineItem.ItemType.BOUNTY).aggregate(
-                total=Sum("unit_price_cents")
-            )["total"]
-            or 0
-        )
+        return sum(item.unit_price_cents * item.quantity for item in self.items.all())
 
-    def get_organisation_tax_rate(self):
-        # Placeholder implementation
-        return 0.2  # 20% tax rate as an example
+    @property
+    def total_amount_cents(self):
+        return self.total_usd_cents + self.calculate_platform_fee() + self.calculate_sales_tax()
 
-    def get_default_european_tax_rate(self):
-        # Placeholder implementation
-        return 0.21  # 21% tax rate as an example
+    @property
+    def total_amount(self):
+        return self.total_amount_cents / 100
 
     def add_adjustment(self, bounty_bid, amount_cents, is_increase=True):
         item_type = (
@@ -674,6 +672,24 @@ class Cart(TimeStampMixin):
         print(f"Cart {self.id} total: {total} cents")
         return total
 
+    def update_totals(self):
+        self.total_usd_cents_excluding_fees_and_taxes = self.items.aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
+        self.total_fees_usd_cents = getattr(self.platform_fee_item, 'amount_cents', 0) if hasattr(self, 'platform_fee_item') else 0
+        self.total_taxes_usd_cents = getattr(self.sales_tax_item, 'amount_cents', 0) if hasattr(self, 'sales_tax_item') else 0
+        self.total_usd_cents_including_fees_and_taxes = (
+            self.total_usd_cents_excluding_fees_and_taxes +
+            self.total_fees_usd_cents +
+            self.total_taxes_usd_cents
+        )
+        self.save()
+
+    def save(self, *args, **kwargs):
+        if not self.pk:  # If this is a new cart
+            super().save(*args, **kwargs)  # Save first to get a primary key
+            self.update_totals()  # Then update totals
+        else:
+            super().save(*args, **kwargs)
+
 
 class SalesOrder(TimeStampMixin):
     class OrderStatus(models.TextChoices):
@@ -684,14 +700,14 @@ class SalesOrder(TimeStampMixin):
         REFUNDED = "Refunded", "Refunded"
 
     id = Base58UUIDv5Field(primary_key=True)
-    cart = models.OneToOneField(Cart, on_delete=models.PROTECT, related_name="sales_order")
+    cart = models.OneToOneField(Cart, on_delete=models.CASCADE)
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name='sales_orders')
     status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
     total_usd_cents_excluding_fees_and_taxes = models.PositiveIntegerField(default=0)
     total_fees_usd_cents = models.PositiveIntegerField(default=0)
     total_taxes_usd_cents = models.PositiveIntegerField(default=0)
     total_usd_cents_including_fees_and_taxes = models.PositiveIntegerField(default=0)
     parent_order = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='child_orders')
-    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name='sales_orders')
 
     def __str__(self):
         return f"Sales Order {self.id} for Cart {self.cart.id}"
@@ -709,7 +725,7 @@ class SalesOrder(TimeStampMixin):
                 item_type=SalesOrderLineItem.ItemType.BOUNTY,
                 bounty=cart_item.bounty,
                 quantity=1,
-                unit_price_cents=cart_item.funding_amount,
+                unit_price_usd_cents=cart_item.unit_price_usd_cents,
             )
 
         platform_fee = getattr(self.cart, "platform_fee_item", None)
@@ -718,7 +734,7 @@ class SalesOrder(TimeStampMixin):
                 sales_order=self,
                 item_type=SalesOrderLineItem.ItemType.PLATFORM_FEE,
                 quantity=1,
-                unit_price_cents=platform_fee.amount_cents,
+                unit_price_usd_cents=platform_fee.amount_cents,
                 fee_rate=platform_fee.fee_rate,
             )
 
@@ -728,7 +744,7 @@ class SalesOrder(TimeStampMixin):
                 sales_order=self,
                 item_type=SalesOrderLineItem.ItemType.SALES_TAX,
                 quantity=1,
-                unit_price_cents=sales_tax.amount_cents,
+                unit_price_usd_cents=sales_tax.amount_cents,
                 tax_rate=sales_tax.tax_rate,
             )
 
@@ -739,24 +755,29 @@ class SalesOrder(TimeStampMixin):
 
     @transaction.atomic
     def process_payment(self):
+        logger.info(f"Starting payment processing for sales order {self.id}")
+        
         if self.status != self.OrderStatus.PENDING:
+            logger.warning(f"Cannot process payment for order {self.id}. Current status: {self.status}")
             return False
 
         self.status = self.OrderStatus.PAYMENT_PROCESSING
         self.save()
 
         try:
-            if self.total_usd_cents > 0 and not self._process_usd_payment():
-                raise ValueError("USD payment failed")
-
-            self.status = self.OrderStatus.COMPLETED
-            self.save()
-            self._activate_purchases()
-            self.cart.status = Cart.CartStatus.COMPLETED
-            self.cart.save()
-            return True
+            if self._process_usd_payment():
+                self.status = self.OrderStatus.COMPLETED  # Change this line
+                self.save()
+                logger.info(f"Payment processed successfully for order {self.id}")
+                self._provision_bounties()
+                self.cart.status = Cart.CartStatus.COMPLETED
+                self.cart.save()
+                return True
+            else:
+                raise Exception("Payment processing failed")
 
         except Exception as e:
+            logger.error(f"Payment processing failed for order {self.id}: {str(e)}")
             self.status = self.OrderStatus.PAYMENT_FAILED
             self.save()
             return False
@@ -766,9 +787,12 @@ class SalesOrder(TimeStampMixin):
         # Return True if successful, False otherwise
         return True  # Placeholder implementation
 
-    def _activate_purchases(self):
-        for item in self.cart.items.all():
+    def _provision_bounties(self):
+        for item in self.line_items.filter(item_type=SalesOrderLineItem.ItemType.BOUNTY):
             bounty = item.bounty
+            Bounty = apps.get_model("product_management", "Bounty")
+            bounty.status = Bounty.BountyStatus.OPEN
+            bounty.save()
             if bounty.challenge:
                 self._activate_challenge(bounty.challenge)
             elif bounty.competition:
@@ -787,6 +811,11 @@ class SalesOrder(TimeStampMixin):
             competition.save()
         # TODO: Add additional activation logic (e.g., setting start date, notifications)
 
+    @property
+    def person(self):
+        return self.cart.person
+
+
 
 class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
     class ItemType(models.TextChoices):
@@ -800,9 +829,8 @@ class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
     sales_order = models.ForeignKey(SalesOrder, related_name="line_items", on_delete=models.CASCADE)
     item_type = models.CharField(max_length=25, choices=ItemType.choices)
     quantity = models.PositiveIntegerField(default=1)
-    unit_price_cents = models.IntegerField(
-        help_text="Price in cents for USD items, or number of points for Point items"
-    )
+    unit_price_usd_cents = models.PositiveIntegerField()
+    unit_price_points = models.PositiveIntegerField(default=0)
     bounty = models.ForeignKey("product_management.Bounty", on_delete=models.SET_NULL, null=True, blank=True)
     fee_rate = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
@@ -810,19 +838,19 @@ class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
 
     @property
     def total_price_cents(self):
-        if self.quantity is None or self.unit_price_cents is None:
+        if self.quantity is None or self.unit_price_usd_cents is None:
             return 0
-        return self.quantity * self.unit_price_cents
+        return self.quantity * self.unit_price_usd_cents
 
     def __str__(self):
         if self.item_type == "BOUNTY":
             price = (
-                f"{self.unit_price_cents/100:.2f} USD"
+                f"{self.unit_price_usd_cents/100:.2f} USD"
                 if self.bounty.reward_type == "USD"
-                else f"{self.unit_price_cents} Points"
+                else f"{self.unit_price_points} Points"
             )
         else:
-            price = f"{self.unit_price_cents/100:.2f} USD"
+            price = f"{self.unit_price_usd_cents/100:.2f} USD"
         return f"{self.item_type} - {price}"
 
     def clean(self):
@@ -1063,6 +1091,8 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
         if not crypto_wallet_address:
             raise ValueError("Crypto wallet address is required for contributor USDT withdrawals.")
         return True
+
+
 
 
 

@@ -6,7 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.core.exceptions import ObjectDoesNotExist
 from django.http import HttpResponseRedirect, JsonResponse
-from django.shortcuts import HttpResponse, get_object_or_404
+from django.shortcuts import HttpResponse, get_object_or_404, render
 from django.urls import reverse, reverse_lazy
 from django.utils.translation import gettext_lazy as _
 from django.views.generic.base import TemplateView
@@ -400,3 +400,8 @@ class BountyDeliveryAttemptDetail(LoginRequiredMixin, mixins.AttachmentMixin, De
             self.object.save()
 
         return HttpResponseRedirect(reverse("dashboard"))
+
+
+def portfolio_view(request, username):
+    # Implementation of portfolio view
+    pass

@@ -12,12 +12,12 @@ def user():
     return User.objects.create_user(username='testuser', email='test@example.com', password='testpass123')
 
 @pytest.fixture
-def person(user):
-    return Person.objects.create(user=user, full_name='Test Person')
+def person():
+    return Person.objects.create(name="Test User", email="test@example.com")
 
 @pytest.fixture
 def organisation():
-    return Organisation.objects.create(name='Test Org', country='US', tax_id='123456789')
+    return Organisation.objects.create(name="Test Org")
 
 @pytest.fixture
 def product():

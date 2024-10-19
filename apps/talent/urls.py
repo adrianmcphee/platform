@@ -1,4 +1,5 @@
 from django.urls import path
+from . import views
 
 from .views import (
     BountyDeliveryAttemptDetail,
@@ -16,9 +17,11 @@ from .views import (
     status_and_points,
 )
 
+app_name = 'talent'
+
 urlpatterns = [
     path("portfolio/<str:username>", TalentPortfolio.as_view(), name="portfolio"),
-    path("profile/<int:pk>/", UpdateProfileView.as_view(), name="profile"),
+    path("profile/<str:pk>/", UpdateProfileView.as_view(), name="profile"),
     path("get-skills/", get_skills, name="get_skills"),
     path("get-current-skills/", get_current_skills, name="get_current_skills"),
     path("get-expertise/", GetExpertiseView.as_view(), name="get_expertise"),
@@ -58,4 +61,5 @@ urlpatterns = [
         BountyDeliveryAttemptDetail.as_view(),
         name="bounty-delivery-attempt-detail",
     ),
+    path('portfolio/<str:username>/', views.portfolio_view, name='portfolio'),
 ]

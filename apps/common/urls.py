@@ -44,7 +44,7 @@ urlpatterns += [
     path("product-tree", ProductTreeView.as_view()),
     path("product-tree/", ProductTreeView.as_view(), name="shareable_product_tree"),
     path("product-tree/share/<str:pk>", ProductTreeUpdateView.as_view(), name="update_product_tree"),
-    path('commerce/', include('apps.commerce.urls')),
+    path('commerce/', include('apps.commerce.urls', namespace='commerce')),
 ]
 
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
