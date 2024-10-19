@@ -363,7 +363,7 @@ class ContributorWalletTransaction(TimeStampMixin):
             elif self.transaction_type in [self.TransactionType.DEBIT, self.TransactionType.WITHDRAWAL]:
                 if not self.wallet.deduct_funds(self.amount_cents):
                     raise ValueError("Insufficient funds")
-            
+
             self.status = self.Status.COMPLETED
             self.save()
             return True
