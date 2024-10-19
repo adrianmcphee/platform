@@ -233,24 +233,22 @@ class OrganisationPointGrant(TimeStampMixin):
             description=f"Grant: {self.rationale}",
         )
 
-class ContributorWallet(models.Model):
-    contributor = models.OneToOneField('User', on_delete=models.CASCADE, related_name="wallet")
+class ContributorWallet(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    person = models.OneToOneField('talent.Person', on_delete=models.CASCADE, related_name="wallet")
     balance_usd_in_cents = models.IntegerField(default=0)  # Balance stored as cents for precision
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         # Format the balance as dollars for readability
-        return f"Wallet for {self.contributor.username} - USD: ${self.balance_usd_in_cents / 100:.2f}"
+        return f"Wallet for {self.person.full_name} - USD: ${self.balance_usd_in_cents / 100:.2f}"
     
-class ContributorPointAccount(models.Model):
-    contributor = models.OneToOneField('User', on_delete=models.CASCADE, related_name="point_account")
+class ContributorPointAccount(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    person = models.OneToOneField('talent.Person', on_delete=models.CASCADE, related_name="point_account")
     balance_points = models.IntegerField(default=0)  # Balance stored as integer points
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"Point Account for {self.contributor.username} - Points: {self.balance_points}"
+        return f"Point Account for {self.person.full_name} - Points: {self.balance_points}"
 
 
 class PlatformFeeConfiguration(TimeStampMixin):
