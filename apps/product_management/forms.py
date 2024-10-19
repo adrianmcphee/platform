@@ -411,21 +411,14 @@ class InitiativeForm(forms.ModelForm):
 class ProductAreaForm(forms.ModelForm):
     class Meta:
         model = ProductArea
-        fields = [
-            "id",
-            "name",
-            "video_link",
-            "video_name",
-            "video_duration",
-            "description",
-        ]
-
+        fields = ['name', 'video_link', 'video_name', 'video_duration', 'description']
+        # Remove 'id' from the fields list
         widgets = {
-            "name": forms.TextInput(attrs={"placeholder": "Enter name here"}),
-            "video_link": forms.TextInput(attrs={"placeholder": "Enter video link here"}),
-            "video_name": forms.TextInput(attrs={"placeholder": "Enter video video_name here"}),
-            "video_duration": forms.TextInput(attrs={"placeholder": "Enter video video_name here, E.x 7:20"}),
-            "description": forms.Textarea(attrs={"placeholder": "Enter description here", "columns": 2}),
+            'name': forms.TextInput(attrs={'class': 'form-control'}),
+            'video_link': forms.TextInput(attrs={'class': 'form-control'}),
+            'video_name': forms.TextInput(attrs={'class': 'form-control'}),
+            'video_duration': forms.TextInput(attrs={'class': 'form-control'}),
+            'description': forms.Textarea(attrs={'class': 'form-control'}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -580,3 +573,4 @@ class ProductRoleAssignmentForm(forms.ModelForm):
                 choices=ProductRoleAssignment.ProductRoles.choices,
             ),
         }
+

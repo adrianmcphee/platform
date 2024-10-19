@@ -12,6 +12,7 @@ from django.db.models import Sum
 from django.apps import apps
 from django.db import transaction
 from abc import ABC, abstractmethod
+from apps.common.models import TreeNode
 
 
 class Organisation(TimeStampMixin):
@@ -21,13 +22,19 @@ class Organisation(TimeStampMixin):
     tax_id = models.CharField(max_length=50, blank=True, null=True, help_text="Tax Identification Number")
 
     def clean(self):
+        if not self.id:
+            self.id = Base58UUIDv5Field().get_prep_value(None)
         if self.tax_id:
             self.tax_id = self.tax_id.upper().replace(" ", "")
             if not self.is_valid_tax_id():
                 raise ValidationError("Invalid Tax Identification Number for the specified country.")
 
     def save(self, *args, **kwargs):
-        self.full_clean()
+        if not self.id:
+            self.id = Base58UUIDv5Field().generate_id()
+        skip_clean = kwargs.pop('skip_clean', False)
+        if not skip_clean:
+            self.full_clean()
         super().save(*args, **kwargs)
 
     def is_valid_tax_id(self):
@@ -676,6 +683,7 @@ class SalesOrder(TimeStampMixin):
     total_taxes_usd_cents = models.PositiveIntegerField(default=0)
     total_usd_cents_including_fees_and_taxes = models.PositiveIntegerField(default=0)
     parent_order = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='child_orders')
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name='sales_orders')
 
     def __str__(self):
         return f"Sales Order {self.id} for Cart {self.cart.id}"

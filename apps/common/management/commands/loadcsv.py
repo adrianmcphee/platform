@@ -271,17 +271,30 @@ class SalesOrderParser(ModelParser):
     def create_object(self, model, row):
         parsed = self.parse_row(row)
         Cart = apps.get_model('commerce.Cart')
+        Organisation = apps.get_model('common.Organisation')
 
-        cart = Cart.objects.get(id=parsed['cart_id'])
+        try:
+            cart = Cart.objects.get(id=parsed['cart_id'])
+            organisation = Organisation.objects.get(id=parsed['organisation_id'])
+        except Cart.DoesNotExist:
+            raise ValueError(f"Cart with id {parsed['cart_id']} does not exist")
+        except Organisation.DoesNotExist:
+            raise ValueError(f"Organisation with id {parsed['organisation_id']} does not exist")
+        
+        # Verify that the cart and organisation match
+        if cart.organisation_id != organisation.id:
+            raise ValueError(f"Cart {cart.id} does not belong to Organisation {organisation.id}")
         
         sales_order, created = model.objects.update_or_create(
             id=parsed['id'],
             defaults={
                 'cart': cart,
+                'organisation': organisation,
                 'status': parsed['status'],
                 'total_usd_cents_excluding_fees_and_taxes': int(parsed['total_usd_cents_excluding_fees_and_taxes']),
                 'total_fees_usd_cents': int(parsed['total_fees_usd_cents']),
                 'total_taxes_usd_cents': int(parsed['total_taxes_usd_cents']),
+                'platform_fee_rate': Decimal(parsed['platform_fee_rate']),
             }
         )
 
@@ -667,3 +680,4 @@ class CompetitionEntryRatingParser(ModelParser):
         )
         
         return obj, created
+
