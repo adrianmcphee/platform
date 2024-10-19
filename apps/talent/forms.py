@@ -5,7 +5,7 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.talent import models as talent
 
-from .models import BountyClaim, BountyDeliveryAttempt, Feedback, Person
+from .models import BountyClaim, BountyDeliveryAttempt, Feedback, Person, PersonSkill, Skill, Expertise
 
 
 def _get_text_input_class():
@@ -37,120 +37,60 @@ class PersonProfileForm(forms.ModelForm):
     class Meta:
         model = Person
         fields = [
-            "id",
-            "full_name",
-            "preferred_name",
-            "photo",
-            "headline",
-            "overview",
-            "current_position",
-            "location",
-            "github_link",
-            "twitter_link",
-            "linkedin_link",
-            "website_link",
-            "send_me_bounties",
+            'full_name', 'preferred_name', 'photo', 'headline', 'overview',
+            'location', 'send_me_bounties', 'current_position',
+            'twitter_link', 'linkedin_link', 'github_link', 'website_link'
         ]
         widgets = {
-            "full_name": forms.TextInput(
-                attrs={
-                    "class": (
-                        "py-1.5 px-3 text-sm text-black border border-solid border-[#D9D9D9] rounded-sm"
-                        " focus:outline-none"
-                    ),
-                    "placeholder": "Your full name",
-                    "autocapitalize": "none",
-                }
-            ),
-            "preferred_name": forms.TextInput(
-                attrs={
-                    "class": (
-                        "py-1.5 px-3 text-sm text-black border border-solid border-[#D9D9D9] rounded-sm"
-                        " focus:outline-none"
-                    ),
-                    "placeholder": "Your preferred name",
-                    "autocapitalize": "none",
-                }
-            ),
-            "photo": forms.FileInput(
-                attrs={
-                    "class": "hidden",
-                    "type": "file",
-                }
-            ),
-            "current_position": forms.TextInput(
-                attrs={
-                    "class": _get_text_input_class(),
-                    "placeholder": "Where are you currently working at",
-                }
-            ),
-            "headline": forms.TextInput(
-                attrs={
-                    "class": _get_text_input_class(),
-                    "placeholder": "Briefly describe yourself",
-                }
-            ),
-            "overview": forms.Textarea(
-                attrs={
-                    "class": _get_text_area_class(),
-                    "placeholder": "Introduce your background",
-                }
-            ),
-            "location": forms.TextInput(
-                attrs={
-                    "class": _get_text_input_class(),
-                    "placeholder": "Tokyo, Japan",
-                }
-            ),
-            "github_link": forms.TextInput(
-                attrs={
-                    "class": _get_text_input_class_for_link(),
-                    "placeholder": "https://github.com/",
-                }
-            ),
-            "twitter_link": forms.TextInput(
-                attrs={
-                    "class": _get_text_input_class_for_link(),
-                    "placeholder": "https://twitter.com/",
-                }
-            ),
-            "linkedin_link": forms.TextInput(
-                attrs={
-                    "class": _get_text_input_class_for_link(),
-                    "placeholder": "https://linkedin.com/in/",
-                }
-            ),
-            "website_link": forms.TextInput(
-                attrs={
-                    "class": _get_text_input_class_for_link(),
-                    "placeholder": "https://",
-                }
-            ),
-            "send_me_bounties": forms.CheckboxInput(
-                attrs={
-                    "class": _get_choice_box_class(),
-                }
-            ),
+            'full_name': forms.TextInput(attrs={'class': 'form-control'}),
+            'preferred_name': forms.TextInput(attrs={'class': 'form-control'}),
+            'photo': forms.ClearableFileInput(attrs={'class': 'form-control-file'}),
+            'headline': forms.TextInput(attrs={'class': 'form-control'}),
+            'overview': forms.Textarea(attrs={'class': 'form-control'}),
+            'location': forms.TextInput(attrs={'class': 'form-control'}),
+            'current_position': forms.TextInput(attrs={'class': 'form-control'}),
+            'twitter_link': forms.URLInput(attrs={'class': 'form-control'}),
+            'linkedin_link': forms.URLInput(attrs={'class': 'form-control'}),
+            'github_link': forms.URLInput(attrs={'class': 'form-control'}),
+            'website_link': forms.URLInput(attrs={'class': 'form-control'}),
+            'send_me_bounties': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
 
-        help_texts = {"send_me_bounties": "Get notified when a new bounty is added."}
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['send_me_bounties'].help_text = 'Get notified when a new bounty is added.'
 
 
 class PersonSkillForm(forms.ModelForm):
-    id = forms.IntegerField(required=False)
-
     class Meta:
-        model = talent.PersonSkill
-        fields = ("id", "skill", "expertise")
+        model = PersonSkill
+        fields = ['person', 'skill']
+        widgets = {
+            'person': forms.Select(attrs={'class': 'form-control'}),
+            'skill': forms.Select(attrs={'class': 'form-control'}),
+        }
 
+    expertise = forms.ModelMultipleChoiceField(
+        queryset=Expertise.objects.all(),
+        widget=forms.CheckboxSelectMultiple,
+        required=False
+    )
 
-PersonSkillFormSet = inlineformset_factory(
-    Person,
-    talent.PersonSkill,
-    form=PersonSkillForm,
-    extra=0,
-    can_delete=True,
-    can_delete_extra=True,
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields['expertise'].initial = self.instance.expertise.all()
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
+
+PersonSkillFormSet = forms.inlineformset_factory(
+    Person, PersonSkill, form=PersonSkillForm,
+    extra=1, can_delete=True
 )
 
 
