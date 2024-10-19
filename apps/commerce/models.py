@@ -223,6 +223,13 @@ class OrganisationPointGrant(TimeStampMixin):
         "talent.Person", on_delete=models.SET_NULL, null=True, related_name="granted_points"
     )
     rationale = models.TextField()
+    grant_request = models.OneToOneField(
+        'OrganisationPointGrantRequest', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name="resulting_grant"
+    )
 
     def __str__(self):
         return f"Grant of {self.amount} points to {self.organisation.name}"
@@ -256,14 +263,17 @@ class OrganisationPointGrantRequest(TimeStampMixin):
         if self.status == "Pending":
             self.status = "Approved"
             self.save()
-            # Add points to the organisation's point account
-            self.organisation.point_account.add_points(self.amount_points)
-            PointTransaction.objects.create(
-                account=self.organisation.point_account,
+            
+            # Create the OrganisationPointGrant
+            grant = OrganisationPointGrant.objects.create(
+                organisation=self.organisation,
                 amount=self.amount_points,
-                transaction_type="GRANT",
-                description=f"Grant for organisation: {self.organisation.name}",
+                granted_by=self.requested_by,
+                rationale=self.rationale,
+                grant_request=self
             )
+            
+            # The point addition and transaction creation are now handled in the OrganisationPointGrant.save() method
 
     def reject(self):
         if self.status == "Pending":
@@ -283,19 +293,34 @@ class ProductPointRequest(TimeStampMixin):
         choices=[("Pending", "Pending"), ("Approved", "Approved"), ("Rejected", "Rejected")],
         default="Pending",
     )
+    resulting_transaction = models.OneToOneField(
+        PointTransaction, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name="product_point_request"
+    )
 
     def approve(self):
         if self.status == "Pending":
             self.status = "Approved"
             self.save()
+            
             # Add points to the product's point account
-            self.product.product_point_account.add_points(self.amount_points)
-            PointTransaction.objects.create(
-                product_account=self.product.product_point_account,
+            product_account, created = ProductPointAccount.objects.get_or_create(product=self.product)
+            product_account.add_points(self.amount_points)
+            
+            # Create the PointTransaction
+            transaction = PointTransaction.objects.create(
+                product_account=product_account,
                 amount=self.amount_points,
-                transaction_type="GRANT",
-                description=f"Grant for product: {self.product.name}",
+                transaction_type="TRANSFER",
+                description=f"Transfer to product: {self.product.name}",
             )
+            
+            # Link the transaction to this request
+            self.resulting_transaction = transaction
+            self.save()
 
     def reject(self):
         if self.status == "Pending":
