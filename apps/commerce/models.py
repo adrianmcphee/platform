@@ -233,6 +233,36 @@ class OrganisationPointGrant(TimeStampMixin):
             description=f"Grant: {self.rationale}",
         )
 
+class OrganisationPointGrantRequest(models.Model):
+    organisation = models.ForeignKey('Organisation', on_delete=models.CASCADE)
+    organisation_point_account = models.ForeignKey('OrganisationPointAccount', on_delete=models.CASCADE)
+    requested_points = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=50, choices=[
+        ('Pending', 'Pending'),
+        ('Approved', 'Approved'),
+        ('Rejected', 'Rejected')
+    ])
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.organisation.name} - {self.requested_points} points request"
+
+class ProductPointRequest(models.Model):
+    product_account = models.ForeignKey('ProductPointAccount', on_delete=models.CASCADE)
+    requested_points = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=50, choices=[
+        ('Pending', 'Pending'),
+        ('Approved', 'Approved'),
+        ('Rejected', 'Rejected')
+    ])
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.product_account.product.name} - {self.requested_points} points request"
+
+
 class ContributorWallet(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     person = models.OneToOneField('talent.Person', on_delete=models.CASCADE, related_name="wallet")
@@ -265,6 +295,47 @@ class ContributorPointAccount(TimeStampMixin):
         self.balance_points += amount_points
         self.save()
 
+
+class ContributorWalletTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        CREDIT = "Credit", "Credit"
+        DEBIT = "Debit", "Debit"
+
+    class PaymentMethod(models.TextChoices):
+        PAYPAL = "PayPal", "PayPal"
+        USDT = "USDT", "USDT"
+        CREDIT_CARD = "CreditCard", "Credit Card"
+        CONTRIBUTOR_WALLET = "ContributorWallet", "Contributor Wallet"  # For internal debits from the wallet
+
+    id = Base58UUIDv5Field(primary_key=True)
+    wallet = models.ForeignKey(ContributorWallet, on_delete=models.CASCADE, related_name="transactions")
+    amount_cents = models.IntegerField()  # Amount stored as cents for precision
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField()
+    
+    # Fields for payment method and external transaction tracking
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)  # External transaction ID (PayPal, USDT, etc.)
+    
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.person.full_name}"
+
+
+class ContributorPointTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        EARN = "Earn", "Earn"
+        USE = "Use", "Use"
+        TRANSFER = "Transfer", "Transfer"
+        REFUND = "Refund", "Refund"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    point_account = models.ForeignKey(ContributorPointAccount, on_delete=models.CASCADE, related_name="transactions")
+    amount_points = models.IntegerField()  # Points being transacted
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField(blank=True)
+    
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of {self.amount_points} points for {self.point_account.person.full_name}"
 
 class PlatformFeeConfiguration(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
