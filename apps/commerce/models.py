@@ -841,26 +841,24 @@ class SalesOrder(TimeStampMixin):
         self.total_usd_cents_including_fees_and_taxes = bounty_total + platform_fee
         self.save()
 
-    @transaction.atomic
     def process_payment(self):
-        print(f"Processing payment for SalesOrder {self.id}")
-        if self.status != self.OrderStatus.PENDING:
-            print(f"Cannot process payment. Current status: {self.status}")
-            return False
-
-        wallet = self.organisation.wallet
+        wallet = self.cart.organisation.wallet
         total_amount = self.total_usd_cents_including_fees_and_taxes
-        print(f"Attempting to deduct {total_amount} cents from wallet")
-
+        
+        logger.info(f"Processing payment for SalesOrder {self.id}")
+        logger.info(f"Total amount to deduct: {total_amount} cents")
+        
         if wallet.deduct_funds(total_amount, f"Payment for order {self.id}"):
             self.status = self.OrderStatus.COMPLETED
             self.save()
+            
             self.cart.status = Cart.CartStatus.CHECKED_OUT
             self.cart.save()
-            print("Payment successful, order completed")
+            
+            logger.info(f"Payment successful for SalesOrder {self.id}")
             return True
         else:
-            print("Insufficient funds in wallet")
+            logger.warning(f"Payment failed for SalesOrder {self.id}")
             return False
 
     def _process_usd_payment(self):

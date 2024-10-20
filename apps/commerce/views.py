@@ -24,26 +24,26 @@ logger = logging.getLogger(__name__)
 
 @login_required
 def bounty_checkout(request):
-    print("Entering bounty_checkout view")
-    # Get the person associated with the logged-in user
+    logger.info("Entering bounty_checkout view")
     person = request.user.person
     cart = Cart.objects.filter(person=person, status=Cart.CartStatus.OPEN).first()
     if not cart:
-        print("No open cart found")
+        logger.warning("No open cart found for user %s", person.id)
         return redirect('commerce:checkout_failure')
 
-    sales_order = cart.salesorder
-    print(f"SalesOrder ID: {sales_order.id}")
-    print(f"SalesOrder total: {sales_order.total_usd_cents_including_fees_and_taxes}")
+    try:
+        cart.update_totals()
+        sales_order = cart.salesorder
+        logger.info("Processing payment for SalesOrder %s, total: %s", sales_order.id, sales_order.total_usd_cents_including_fees_and_taxes)
 
-    wallet = cart.organisation.wallet
-    print(f"Wallet balance before: {wallet.balance_usd_cents}")
-
-    if sales_order.process_payment():
-        print("Payment processed successfully")
-        return redirect('commerce:checkout_success')
-    else:
-        print("Payment processing failed")
+        if sales_order.process_payment():
+            logger.info("Payment processed successfully for SalesOrder %s", sales_order.id)
+            return redirect('commerce:checkout_success')
+        else:
+            logger.warning("Payment processing failed for SalesOrder %s", sales_order.id)
+            return redirect('commerce:checkout_failure')
+    except Exception as e:
+        logger.error("Error during checkout process: %s", str(e), exc_info=True)
         return redirect('commerce:checkout_failure')
 
 @login_required
