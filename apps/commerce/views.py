@@ -36,8 +36,12 @@ def bounty_checkout(request):
         sales_order = cart.salesorder
         logger.info("Processing payment for SalesOrder %s, total: %s", sales_order.id, sales_order.total_usd_cents_including_fees_and_taxes)
 
+        print(f"Before process_payment: SalesOrder status: {sales_order.status}")
         if sales_order.process_payment():
+            print(f"After process_payment: SalesOrder status: {sales_order.status}")
             logger.info("Payment processed successfully for SalesOrder %s", sales_order.id)
+            cart.status = Cart.CartStatus.CHECKED_OUT
+            cart.save()
             return redirect('commerce:checkout_success')
         else:
             logger.warning("Payment processing failed for SalesOrder %s", sales_order.id)

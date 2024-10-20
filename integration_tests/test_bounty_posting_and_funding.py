@@ -1,7 +1,7 @@
 import pytest
 from django.urls import reverse
 from django.contrib.auth import get_user_model
-from apps.commerce.models import Cart, SalesOrder, OrganisationWallet, Organisation, CartLineItem
+from apps.commerce.models import Cart, SalesOrder, OrganisationWallet, Organisation, CartLineItem, OrganisationWalletTransaction
 from apps.product_management.models import Bounty, Product, Challenge, Competition
 from apps.talent.models import Person
 from apps.security.models import User, OrganisationPersonRoleAssignment
@@ -109,24 +109,21 @@ def bounty_usd(db, product):
     )
 
 @pytest.mark.django_db
-@patch('apps.commerce.models.SalesOrder.process_payment')
-def test_successful_bounty_checkout_with_sufficient_balance(mock_process_payment, client, person, organisation, wallet):
-    # Set up the mock to return True and update the statuses
-    def side_effect_process_payment():
-        nonlocal cart, sales_order
-        sales_order.status = SalesOrder.OrderStatus.COMPLETED
-        sales_order.save()
-        cart.status = Cart.CartStatus.CHECKED_OUT
-        cart.save()
+@patch('apps.commerce.models.OrganisationWallet.deduct_funds')
+def test_successful_bounty_checkout_with_sufficient_balance(mock_deduct_funds, client, person, organisation, wallet):
+    def side_effect_deduct_funds(wallet, amount_cents, description):
+        wallet.balance_usd_cents -= amount_cents
+        wallet.save()
         return True
 
-    mock_process_payment.side_effect = side_effect_process_payment
+    mock_deduct_funds.side_effect = side_effect_deduct_funds
 
     # Ensure the person is associated with the user
     user = person.user
     client.force_login(user)
 
-    wallet.balance_usd_cents = 20000  # $200.00 (more than the total including fees)
+    initial_balance = 20000  # $200.00
+    wallet.balance_usd_cents = initial_balance
     wallet.save()
 
     # Ensure the OrganisationPersonRoleAssignment exists
@@ -189,9 +186,14 @@ def test_successful_bounty_checkout_with_sufficient_balance(mock_process_payment
 
     response = client.post(reverse('commerce:bounty_checkout'))
 
-    print(f"Mock process_payment called: {mock_process_payment.call_count} times")
-    print(f"Response status code: {response.status_code}")
-    print(f"Response url: {response.url}")
+    print(f"Response content: {response.content.decode()}")
+    print(f"Mock deduct_funds called: {mock_deduct_funds.called}")
+    print(f"Mock deduct_funds call count: {mock_deduct_funds.call_count}")
+    print(f"Mock deduct_funds call args: {mock_deduct_funds.call_args}")
+
+    assert mock_deduct_funds.called, "OrganisationWallet.deduct_funds was not called"
+    assert response.status_code == 302
+    assert response.url == reverse('commerce:checkout_success')
 
     cart.refresh_from_db()
     sales_order.refresh_from_db()
@@ -201,12 +203,49 @@ def test_successful_bounty_checkout_with_sufficient_balance(mock_process_payment
     print(f"SalesOrder status after checkout: {sales_order.status}")
     print(f"Wallet balance after checkout: {wallet.balance_usd_cents}")
 
-    assert response.status_code == 302
-    assert response.url == reverse('commerce:checkout_success')
     assert cart.status == Cart.CartStatus.CHECKED_OUT
     assert sales_order.status == SalesOrder.OrderStatus.COMPLETED
-    assert mock_process_payment.called
-    mock_process_payment.assert_called_once()
+
+    # Check if a transaction was created
+    transaction = OrganisationWalletTransaction.objects.filter(
+        wallet=wallet,
+        amount_cents=sales_order.total_usd_cents_including_fees_and_taxes,
+        transaction_type=OrganisationWalletTransaction.TransactionType.DEBIT,
+        description=f"Payment for order {sales_order.id}"
+    ).first()
+    assert transaction is not None
+
+    expected_deduction = bounty.reward_in_usd_cents + platform_fee_cents
+    print(f"Expected deduction: {expected_deduction}")
+    expected_balance = initial_balance - expected_deduction
+
+    # Insert the debug prints here
+    print("All transactions:")
+    for t in OrganisationWalletTransaction.objects.all():
+        print(f"Transaction: wallet={t.wallet}, amount={t.amount_cents}, type={t.transaction_type}, description='{t.description}'")
+
+    transaction_query = OrganisationWalletTransaction.objects.filter(
+        wallet=wallet,
+        amount_cents=expected_deduction,
+        transaction_type=OrganisationWalletTransaction.TransactionType.DEBIT,
+        description=f"Payment for order {sales_order.id}"
+    )
+    print(f"Transaction query: {transaction_query.query}")
+    transaction = transaction_query.first()
+    print(f"Found transaction: {transaction}")
+
+    assert cart.status == Cart.CartStatus.CHECKED_OUT
+    assert sales_order.status == SalesOrder.OrderStatus.COMPLETED
+    assert wallet.balance_usd_cents == expected_balance
+
+    # Check if a transaction was created
+    transaction = OrganisationWalletTransaction.objects.filter(
+        wallet=wallet,
+        amount_cents=expected_deduction,
+        transaction_type=OrganisationWalletTransaction.TransactionType.DEBIT,
+        description=f"Payment for order {sales_order.id}"
+    ).first()
+    assert transaction is not None
 
 @pytest.mark.django_db
 @patch('apps.commerce.models.Cart.update_totals')
@@ -445,6 +484,25 @@ def test_bounty_checkout_view_handling(mock_process_payment, mock_update_totals,
 
     sales_order = SalesOrder.objects.get(cart=cart)
     assert sales_order.status == SalesOrder.OrderStatus.COMPLETED
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

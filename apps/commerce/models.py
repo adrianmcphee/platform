@@ -88,17 +88,11 @@ class OrganisationWallet(TimeStampMixin):
             related_order=related_order,
         )
 
-    def deduct_funds(self, amount_cents, description, related_order=None):
-        if self.balance_usd_cents >= amount_cents:
-            self.balance_usd_cents -= amount_cents
-            self.save()
-            OrganisationWalletTransaction.objects.create(
-                wallet=self,
-                amount_cents=amount_cents,
-                transaction_type=OrganisationWalletTransaction.TransactionType.DEBIT,
-                description=description,
-                related_order=related_order,
-            )
+    @classmethod
+    def deduct_funds(cls, wallet, amount_cents, description):
+        if wallet.balance_usd_cents >= amount_cents:
+            wallet.balance_usd_cents -= amount_cents
+            wallet.save()
             return True
         return False
 
@@ -681,80 +675,31 @@ class Cart(TimeStampMixin):
         print(f"Cart {self.id} total: {total} cents")
         return total
 
-    def update_totals(self, save=True):
-        # Remove any existing platform fee line items
-        self.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).delete()
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        updating_totals = kwargs.pop('updating_totals', False)
+        super().save(*args, **kwargs)
+        if is_new and not updating_totals:
+            self.update_totals()
 
-        # Calculate total for bounty items
-        bounty_total = sum(
-            item.unit_price_usd_cents * item.quantity
-            for item in self.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY)
-        )
-
-        # Calculate and add new platform fee
-        fee_config = PlatformFeeConfiguration.get_active_configuration()
-        if fee_config and bounty_total > 0:
-            platform_fee = int(bounty_total * fee_config.percentage_decimal)
-            CartLineItem.objects.create(
-                cart=self,
-                item_type=CartLineItem.ItemType.PLATFORM_FEE,
-                quantity=1,
-                unit_price_usd_cents=platform_fee,
-                funding_type='USD'
-            )
-
-        # Recalculate totals
-        self.total_usd_cents_excluding_fees_and_taxes = sum(
-            item.unit_price_usd_cents * item.quantity
-            for item in self.line_items.exclude(
-                item_type__in=[
-                    CartLineItem.ItemType.PLATFORM_FEE,
-                    CartLineItem.ItemType.SALES_TAX,
-                    CartLineItem.ItemType.DECREASE_ADJUSTMENT
-                ]
-            )
-        )
-        self.total_usd_cents_including_fees_and_taxes = sum(
-            item.unit_price_usd_cents * item.quantity
-            for item in self.line_items.all()
-        )
-
-        if save:
-            super().save()
-
-        # Update associated SalesOrder
+    def update_totals(self, skip_save=False):
+        line_items = self.line_items.all()
+        self.total_usd_cents = sum(item.unit_price_usd_cents * item.quantity for item in line_items) if line_items.exists() else 0
+        self.total_usd_cents_including_fees_and_taxes = self.total_usd_cents
+        if not skip_save:
+            self.save(updating_totals=True)
+        
         self.update_sales_order()
 
     def update_sales_order(self):
-        try:
-            sales_order = self.salesorder
-        except SalesOrder.DoesNotExist:
-            sales_order = SalesOrder.objects.create(cart=self)
-
-        # Transfer line items
-        sales_order.line_items.all().delete()  # Remove existing line items
-        for cart_item in self.line_items.all():
-            SalesOrderLineItem.objects.create(
-                sales_order=sales_order,
-                item_type=cart_item.item_type,
-                quantity=cart_item.quantity,
-                unit_price_usd_cents=cart_item.unit_price_usd_cents,
-                bounty=cart_item.bounty
-                # Remove funding_type from here
-            )
-
-        # Recalculate SalesOrder totals
-        sales_order.update_totals()
-
-    def save(self, *args, **kwargs):
-        is_new = self._state.adding
-        super().save(*args, **kwargs)
-        if is_new:
-            self.update_totals(save=False)
+        sales_order, created = SalesOrder.objects.get_or_create(cart=self)
+        sales_order.total_usd_cents = self.total_usd_cents
+        sales_order.total_usd_cents_including_fees_and_taxes = self.total_usd_cents_including_fees_and_taxes
+        sales_order.save()
 
     @property
-    def sales_order(self):
-        return getattr(self, 'associated_sales_order', None)
+    def salesorder(self):
+        return self.salesorders.first()
 
 
 class SalesOrder(TimeStampMixin):
@@ -842,23 +787,40 @@ class SalesOrder(TimeStampMixin):
         self.save()
 
     def process_payment(self):
-        wallet = self.cart.organisation.wallet
-        total_amount = self.total_usd_cents_including_fees_and_taxes
-        
-        logger.info(f"Processing payment for SalesOrder {self.id}")
-        logger.info(f"Total amount to deduct: {total_amount} cents")
-        
-        if wallet.deduct_funds(total_amount, f"Payment for order {self.id}"):
-            self.status = self.OrderStatus.COMPLETED
-            self.save()
+        try:
+            wallet = self.cart.organisation.wallet
+            print(f"Processing payment for SalesOrder {self.id}")
+            print(f"Wallet balance before deduction: {wallet.balance_usd_cents}")
+            print(f"Attempting to deduct {self.total_usd_cents_including_fees_and_taxes} cents")
             
-            self.cart.status = Cart.CartStatus.CHECKED_OUT
-            self.cart.save()
+            deduction_successful = OrganisationWallet.deduct_funds(
+                wallet,
+                self.total_usd_cents_including_fees_and_taxes, 
+                f"Payment for order {self.id}"
+            )
             
-            logger.info(f"Payment successful for SalesOrder {self.id}")
-            return True
-        else:
-            logger.warning(f"Payment failed for SalesOrder {self.id}")
+            print(f"Deduction successful: {deduction_successful}")
+            
+            if deduction_successful:
+                print(f"Funds deducted successfully")
+                self.status = self.OrderStatus.COMPLETED
+                self.save()
+                print(f"SalesOrder status updated to {self.status}")
+                # Create a transaction
+                transaction = OrganisationWalletTransaction.objects.create(
+                    wallet=wallet,
+                    amount_cents=self.total_usd_cents_including_fees_and_taxes,
+                    transaction_type=OrganisationWalletTransaction.TransactionType.DEBIT,
+                    description=f"Payment for order {self.id}",
+                    related_order=self
+                )
+                print(f"Transaction created: {transaction}")
+                return True
+            print(f"Failed to deduct funds")
+            return False
+        except Exception as e:
+            print(f"Error processing payment: {str(e)}")
+            logger.error(f"Error processing payment for order {self.id}: {str(e)}")
             return False
 
     def _process_usd_payment(self):
@@ -1174,8 +1136,11 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
 
 @receiver(post_save, sender=Cart)
 def create_or_update_sales_order(sender, instance, created, **kwargs):
-    if not created:
-        instance.update_sales_order()
+    instance.update_sales_order()
+
+
+
+
 
 
 
