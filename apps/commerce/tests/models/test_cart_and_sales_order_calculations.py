@@ -1,9 +1,10 @@
 import pytest
 import logging
-from apps.commerce.models import Cart, SalesOrder, CartLineItem, Organisation
-from apps.product_management.models import Bounty, Product  # Import Product
+from apps.commerce.models import Cart, SalesOrder, CartLineItem, Organisation, PlatformFeeConfiguration
+from apps.product_management.models import Bounty, Product
 from apps.talent.models import Person
-from apps.security.models import User  # Import the User model
+from apps.security.models import User
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ def setup_data():
     # Ensure the SalesOrder is created with the correct organisation
     sales_order = SalesOrder.objects.get(cart=cart)
     
+    # Create a PlatformFeeConfiguration
+    PlatformFeeConfiguration.objects.create(percentage=5, applies_from_date=timezone.now())
+    
     logger.info(f"Setup data created: Cart {cart.id}, SalesOrder {sales_order.id}")
     return person, organisation, cart, sales_order, bounty, product
 
@@ -50,16 +54,6 @@ def test_cart_and_sales_order_totals_match(setup_data):
         funding_type=bounty.reward_type
     )
 
-    # Create a platform fee line item (assuming 5% fee)
-    platform_fee_cents = int(bounty.reward_in_usd_cents * 0.05)
-    CartLineItem.objects.create(
-        cart=cart,
-        item_type=CartLineItem.ItemType.PLATFORM_FEE,
-        quantity=1,
-        unit_price_usd_cents=platform_fee_cents,
-        funding_type='USD'
-    )
-
     logger.info(f"Updating totals for Cart {cart.id}")
     cart.update_totals()
 
@@ -72,6 +66,18 @@ def test_cart_and_sales_order_totals_match(setup_data):
     # Assert that the totals match
     assert cart.total_usd_cents_excluding_fees_and_taxes == sales_order.total_usd_cents_excluding_fees_and_taxes
     assert cart.total_usd_cents_including_fees_and_taxes == sales_order.total_usd_cents_including_fees_and_taxes
+
+    # Check that the platform fee was automatically added
+    platform_fee_item = cart.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).first()
+    assert platform_fee_item is not None
+
+    # Calculate expected fee (5% fee)
+    expected_fee = int(bounty.reward_in_usd_cents * 0.05)
+    assert platform_fee_item.unit_price_usd_cents == expected_fee
+
+    # Check total calculations
+    assert cart.total_usd_cents_excluding_fees_and_taxes == bounty.reward_in_usd_cents
+    assert cart.total_usd_cents_including_fees_and_taxes == bounty.reward_in_usd_cents + expected_fee
 
 @pytest.mark.django_db
 def test_cart_update_totals_updates_sales_order(setup_data):
@@ -99,17 +105,7 @@ def test_cart_update_totals_updates_sales_order(setup_data):
 
     # Assert that the sales order totals have been updated
     assert sales_order.total_usd_cents_excluding_fees_and_taxes == 10000
-    assert sales_order.total_usd_cents_including_fees_and_taxes == 10000
-
-    logger.info(f"Adding platform fee for Cart {cart.id}")
-    platform_fee_cents = 500
-    CartLineItem.objects.create(
-        cart=cart,
-        item_type=CartLineItem.ItemType.PLATFORM_FEE,
-        quantity=1,
-        unit_price_usd_cents=platform_fee_cents,
-        funding_type='USD'
-    )
+    assert sales_order.total_usd_cents_including_fees_and_taxes == 10500  # 10000 + 5% fee
 
     logger.info(f"Updating totals for Cart {cart.id} again")
     cart.update_totals()
@@ -120,7 +116,7 @@ def test_cart_update_totals_updates_sales_order(setup_data):
     logger.info(f"Cart {cart.id} totals: excluding fees: {cart.total_usd_cents_excluding_fees_and_taxes}, including fees: {cart.total_usd_cents_including_fees_and_taxes}")
     logger.info(f"SalesOrder {sales_order.id} totals: excluding fees: {sales_order.total_usd_cents_excluding_fees_and_taxes}, including fees: {sales_order.total_usd_cents_including_fees_and_taxes}")
 
-    # Assert that the sales order totals have been updated correctly
+    # Assert that the sales order totals have not changed
     assert sales_order.total_usd_cents_excluding_fees_and_taxes == 10000
     assert sales_order.total_usd_cents_including_fees_and_taxes == 10500
 
@@ -158,17 +154,6 @@ def test_multiple_bounties_and_fees(setup_data):
         funding_type='USD'
     )
 
-    logger.info(f"Creating platform fee CartLineItem for Cart {cart.id}")
-    # Create platform fee line item (
-    platform_fee_cents = int(15000 * 0.05)  # 5% of total bounty amount
-    CartLineItem.objects.create(
-        cart=cart,
-        item_type=CartLineItem.ItemType.PLATFORM_FEE,
-        quantity=1,
-        unit_price_usd_cents=platform_fee_cents,
-        funding_type='USD'
-    )
-
     logger.info(f"Updating totals for Cart {cart.id}")
     cart.update_totals()
 
@@ -181,3 +166,15 @@ def test_multiple_bounties_and_fees(setup_data):
     # Assert that the totals match
     assert cart.total_usd_cents_excluding_fees_and_taxes == sales_order.total_usd_cents_excluding_fees_and_taxes
     assert cart.total_usd_cents_including_fees_and_taxes == sales_order.total_usd_cents_including_fees_and_taxes
+
+    # Check that the platform fee was automatically added
+    platform_fee_item = cart.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).first()
+    assert platform_fee_item is not None
+
+    # Calculate expected fee (5% of total bounty amount)
+    expected_fee = int(15000 * 0.05)
+    assert platform_fee_item.unit_price_usd_cents == expected_fee
+
+    # Check total calculations
+    assert cart.total_usd_cents_excluding_fees_and_taxes == 15000
+    assert cart.total_usd_cents_including_fees_and_taxes == 15000 + expected_fee

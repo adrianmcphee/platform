@@ -681,58 +681,76 @@ class Cart(TimeStampMixin):
         print(f"Cart {self.id} total: {total} cents")
         return total
 
-    def update_totals(self):
-        logger.info(f"Updating totals for Cart {self.id}")
-        # Calculate totals from CartLineItems
-        total_excluding_fees = self.line_items.filter(
-            item_type=CartLineItem.ItemType.BOUNTY
-        ).aggregate(
-            total=Sum('unit_price_usd_cents')
-        )['total'] or 0
+    def update_totals(self, save=True):
+        # Remove any existing platform fee line items
+        self.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).delete()
 
-        total_including_fees = self.line_items.aggregate(
-            total=Sum('unit_price_usd_cents')
-        )['total'] or 0
+        # Calculate total for bounty items
+        bounty_total = sum(
+            item.unit_price_usd_cents * item.quantity
+            for item in self.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY)
+        )
 
-        logger.info(f"Calculated totals for Cart {self.id}: excluding fees: {total_excluding_fees}, including fees: {total_including_fees}")
+        # Calculate and add new platform fee
+        fee_config = PlatformFeeConfiguration.get_active_configuration()
+        if fee_config and bounty_total > 0:
+            platform_fee = int(bounty_total * fee_config.percentage_decimal)
+            CartLineItem.objects.create(
+                cart=self,
+                item_type=CartLineItem.ItemType.PLATFORM_FEE,
+                quantity=1,
+                unit_price_usd_cents=platform_fee,
+                funding_type='USD'
+            )
 
-        # Update Cart totals
-        self.total_usd_cents_excluding_fees_and_taxes = total_excluding_fees
-        self.total_usd_cents_including_fees_and_taxes = total_including_fees
-        self.save()
+        # Recalculate totals
+        self.total_usd_cents_excluding_fees_and_taxes = sum(
+            item.unit_price_usd_cents * item.quantity
+            for item in self.line_items.exclude(
+                item_type__in=[
+                    CartLineItem.ItemType.PLATFORM_FEE,
+                    CartLineItem.ItemType.SALES_TAX,
+                    CartLineItem.ItemType.DECREASE_ADJUSTMENT
+                ]
+            )
+        )
+        self.total_usd_cents_including_fees_and_taxes = sum(
+            item.unit_price_usd_cents * item.quantity
+            for item in self.line_items.all()
+        )
 
-        logger.info(f"Updated Cart {self.id} totals: excluding fees: {self.total_usd_cents_excluding_fees_and_taxes}, including fees: {self.total_usd_cents_including_fees_and_taxes}")
+        if save:
+            super().save()
 
         # Update associated SalesOrder
+        self.update_sales_order()
+
+    def update_sales_order(self):
         try:
             sales_order = self.salesorder
-            logger.info(f"Updating SalesOrder {sales_order.id} for Cart {self.id}")
-            sales_order.total_usd_cents_excluding_fees_and_taxes = total_excluding_fees
-            sales_order.total_usd_cents_including_fees_and_taxes = total_including_fees
-            sales_order.save()
-            logger.info(f"Updated SalesOrder {sales_order.id} totals: excluding fees: {sales_order.total_usd_cents_excluding_fees_and_taxes}, including fees: {sales_order.total_usd_cents_including_fees_and_taxes}")
         except SalesOrder.DoesNotExist:
-            logger.warning(f"Cart {self.id} has no associated SalesOrder")
+            sales_order = SalesOrder.objects.create(cart=self)
 
-    def get_or_create_sales_order(self):
-        from apps.commerce.models import SalesOrder  # Import here to avoid circular import
-        sales_order, created = SalesOrder.objects.get_or_create(
-            cart=self,
-            defaults={
-                'organisation': self.organisation,
-                'status': SalesOrder.OrderStatus.PENDING,
-            }
-        )
-        if created:
-            sales_order.recalculate_totals()
-        return sales_order
+        # Transfer line items
+        sales_order.line_items.all().delete()  # Remove existing line items
+        for cart_item in self.line_items.all():
+            SalesOrderLineItem.objects.create(
+                sales_order=sales_order,
+                item_type=cart_item.item_type,
+                quantity=cart_item.quantity,
+                unit_price_usd_cents=cart_item.unit_price_usd_cents,
+                bounty=cart_item.bounty
+                # Remove funding_type from here
+            )
+
+        # Recalculate SalesOrder totals
+        sales_order.update_totals()
 
     def save(self, *args, **kwargs):
-        if not self._state.adding and not getattr(self, '_updating_totals', False):
-            self._updating_totals = True
-            self.update_totals()
-            self._updating_totals = False
+        is_new = self._state.adding
         super().save(*args, **kwargs)
+        if is_new:
+            self.update_totals(save=False)
 
     @property
     def sales_order(self):
@@ -798,29 +816,21 @@ class SalesOrder(TimeStampMixin):
             )
 
     def update_totals(self):
-        # Calculate total excluding fees and taxes
-        self.total_usd_cents_excluding_fees_and_taxes = self.line_items.filter(
-            item_type=SalesOrderLineItem.ItemType.BOUNTY
-        ).aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
-
-        # Calculate fees
-        self.total_fees_usd_cents = self.line_items.filter(
-            item_type=SalesOrderLineItem.ItemType.PLATFORM_FEE
-        ).aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
-
-        # Calculate taxes
-        self.total_taxes_usd_cents = self.line_items.filter(
-            item_type=SalesOrderLineItem.ItemType.SALES_TAX
-        ).aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
-
-        # Calculate total including fees and taxes
-        self.total_usd_cents_including_fees_and_taxes = (
-            self.total_usd_cents_excluding_fees_and_taxes +
-            self.total_fees_usd_cents +
-            self.total_taxes_usd_cents
+        self.total_usd_cents_excluding_fees_and_taxes = sum(
+            item.unit_price_usd_cents * item.quantity
+            for item in self.line_items.exclude(
+                item_type__in=[
+                    SalesOrderLineItem.ItemType.PLATFORM_FEE,
+                    SalesOrderLineItem.ItemType.SALES_TAX,
+                    SalesOrderLineItem.ItemType.DECREASE_ADJUSTMENT
+                ]
+            )
         )
-        if not getattr(self, '_updating_totals', False):
-            self.save()
+        self.total_usd_cents_including_fees_and_taxes = sum(
+            item.unit_price_usd_cents * item.quantity
+            for item in self.line_items.all()
+        )
+        self.save()
 
     def recalculate_totals(self):
         cart_items = self.cart.items.all()
@@ -1165,10 +1175,9 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
         return True
 
 @receiver(post_save, sender=Cart)
-def create_sales_order(sender, instance, created, **kwargs):
-    if created:
-        SalesOrder.objects.create(cart=instance, organisation=instance.organisation)
-        logger.info(f"Created SalesOrder for Cart {instance.id}")
+def create_or_update_sales_order(sender, instance, created, **kwargs):
+    if not created:
+        instance.update_sales_order()
 
 
 
