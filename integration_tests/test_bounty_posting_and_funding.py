@@ -107,22 +107,21 @@ def bounty_usd(db, product):
     )
 
 @pytest.mark.django_db
-@patch('apps.commerce.models.Cart.update_totals')
+# Remove this line: @patch('apps.commerce.models.Cart.update_totals')
 @patch('apps.commerce.models.SalesOrder.process_payment')
-def test_successful_bounty_checkout_with_sufficient_balance(mock_process_payment, mock_update_totals, client, person, organisation, wallet, cart):
+def test_successful_bounty_checkout_with_sufficient_balance(mock_process_payment, client, person, organisation, wallet, cart):
     mock_process_payment.return_value = True
-    mock_update_totals.return_value = None
-    
-    # Set up the cart with the correct totals
-    cart.total_usd_cents_excluding_fees_and_taxes = 10000  # $100.00
-    cart.total_fees_usd_cents = 500  # $5.00
-    cart.total_taxes_usd_cents = 0  # $0.00
-    cart.total_usd_cents_including_fees_and_taxes = 10500  # $105.00
-    cart.save()
     
     client.force_login(person.user)
-    wallet.balance_usd_cents = 15000  # $150.00
+    wallet.balance_usd_cents = 20000  # $200.00 (more than the total including fees)
     wallet.save()
+
+    # Ensure the OrganisationPersonRoleAssignment exists
+    OrganisationPersonRoleAssignment.objects.get_or_create(
+        person=person,
+        organisation=organisation,
+        role=OrganisationPersonRoleAssignment.OrganisationRoles.MEMBER
+    )
 
     product = Product.objects.create(
         name="Test Product",
@@ -141,20 +140,28 @@ def test_successful_bounty_checkout_with_sufficient_balance(mock_process_payment
         reward_in_usd_cents=10000  # $100.00
     )
 
+    # Create bounty line item
     CartLineItem.objects.create(
         cart=cart,
         item_type=CartLineItem.ItemType.BOUNTY,
         quantity=1,
-        unit_price_usd_cents=10000,
+        unit_price_usd_cents=bounty.reward_in_usd_cents,
         bounty=bounty,
+        funding_type=bounty.reward_type
+    )
+
+    # Create platform fee line item (assuming 5% fee)
+    platform_fee_cents = int(bounty.reward_in_usd_cents * 0.05)
+    CartLineItem.create(
+        cart=cart,
+        item_type=CartLineItem.ItemType.PLATFORM_FEE,
+        quantity=1,
+        unit_price_usd_cents=platform_fee_cents,
         funding_type='USD'
     )
 
-    OrganisationPersonRoleAssignment.objects.create(
-        person=person,
-        organisation=organisation,
-        role=OrganisationPersonRoleAssignment.OrganisationRoles.MEMBER
-    )
+    # Remove this line: cart.update_totals()
+    # The view should call update_totals() internally
 
     response = client.post(reverse('commerce:bounty_checkout'))
     assert response.status_code == 302
@@ -166,6 +173,8 @@ def test_successful_bounty_checkout_with_sufficient_balance(mock_process_payment
     sales_order = SalesOrder.objects.get(cart=cart)
     assert sales_order.person == person
     assert sales_order.organisation == organisation
+    
+    # Verify that the SalesOrder totals are correct
     assert sales_order.total_usd_cents_excluding_fees_and_taxes == 10000
     assert sales_order.total_fees_usd_cents == 500
     assert sales_order.total_taxes_usd_cents == 0
@@ -414,8 +423,6 @@ def test_bounty_checkout_view_handling(mock_process_payment, mock_update_totals,
 
     sales_order = SalesOrder.objects.get(cart=cart)
     assert sales_order.status == SalesOrder.OrderStatus.COMPLETED
-
-
 
 
 

@@ -24,36 +24,44 @@ logger = logging.getLogger(__name__)
 
 @login_required
 def bounty_checkout(request):
-    cart = Cart.objects.get(person=request.user.person, status=Cart.CartStatus.OPEN)
-    wallet = OrganisationWallet.objects.get(organisation=cart.organisation)
-    
-    logger.info(f"Starting checkout for cart {cart.id}")
-    
-    if cart.total_usd_cents_including_fees_and_taxes > wallet.balance_usd_cents:
-        logger.warning(f"Insufficient balance for checkout. Cart total: {cart.total_usd_cents_including_fees_and_taxes}, Wallet balance: {wallet.balance_usd_cents}")
+    try:
+        cart = Cart.objects.get(person=request.user.person, status=Cart.CartStatus.OPEN)
+        cart.update_totals()  # This will also update or create the SalesOrder
+
+        sales_order = cart.sales_order
+        if sales_order and sales_order.status == SalesOrder.OrderStatus.PENDING:
+            # Get the organisation through OrganisationPersonRoleAssignment
+            try:
+                org_assignment = OrganisationPersonRoleAssignment.objects.get(person=request.user.person, organisation=cart.organisation)
+                wallet = org_assignment.organisation.wallet
+            except OrganisationPersonRoleAssignment.DoesNotExist:
+                messages.error(request, 'You are not associated with the organisation for this cart.')
+                return redirect('commerce:checkout_failure')
+
+            # Check if the wallet has sufficient balance
+            if wallet.balance_usd_cents < cart.total_usd_cents_including_fees_and_taxes:
+                messages.error(request, 'Insufficient balance in the wallet.')
+                return redirect('commerce:checkout_failure')
+
+            # Process the payment
+            if sales_order.process_payment():
+                # Payment successful
+                cart.status = Cart.CartStatus.CHECKED_OUT
+                cart.save()
+                return redirect('commerce:checkout_success')
+            else:
+                # Payment failed
+                messages.error(request, 'Payment processing failed. Please try again.')
+                return redirect('commerce:checkout_failure')
+        else:
+            messages.error(request, 'Invalid cart or sales order status.')
+            return redirect('commerce:checkout_failure')
+    except Cart.DoesNotExist:
+        messages.error(request, 'No active cart found.')
         return redirect('commerce:checkout_failure')
-    
-    sales_order = SalesOrder.objects.create(
-        cart=cart,
-        organisation=cart.organisation,
-        total_usd_cents_excluding_fees_and_taxes=cart.total_usd_cents_excluding_fees_and_taxes,
-        total_fees_usd_cents=cart.total_fees_usd_cents,
-        total_taxes_usd_cents=cart.total_taxes_usd_cents,
-        total_usd_cents_including_fees_and_taxes=cart.total_usd_cents_including_fees_and_taxes,
-        status=SalesOrder.OrderStatus.PENDING
-    )
-    
-    if sales_order.process_payment():
-        logger.info(f"Payment processed successfully for sales order {sales_order.id}")
-        wallet.balance_usd_cents -= cart.total_usd_cents_including_fees_and_taxes
-        wallet.save()
-        cart.status = Cart.CartStatus.CHECKED_OUT
-        cart.save()
-        sales_order.status = SalesOrder.OrderStatus.COMPLETED
-        sales_order.save()
-        return redirect('commerce:checkout_success')
-    else:
-        logger.error(f"Payment processing failed for sales order {sales_order.id}")
+    except Exception as e:
+        logger.error(f"Error during checkout: {str(e)}")
+        messages.error(request, 'An error occurred during checkout. Please try again.')
         return redirect('commerce:checkout_failure')
 
 @login_required
@@ -96,7 +104,7 @@ def add_to_cart(request):
                     cart=cart,
                     item_type=CartLineItem.ItemType.BOUNTY,
                     quantity=1,
-                    unit_price_usd_cents=bounty.reward_in_usd_cents if bounty.reward_type == 'USD' else None,
+                    unit_price_usd_cents=bounty.reward_in_usd_cents if bounty.reward_type == 'USD' else 0,
                     unit_price_points=bounty.reward_in_points if bounty.reward_type == 'POINTS' else None,
                     bounty=bounty,
                     funding_type=bounty.reward_type
@@ -126,7 +134,8 @@ def checkout_success(request):
 
 @login_required
 def checkout_failure(request):
-    return render(request, 'checkout_failure.html')
+    # Add any necessary logic for the checkout failure page
+    return render(request, 'commerce/checkout_failure.html')
 
 @login_required
 def wallet_success(request):

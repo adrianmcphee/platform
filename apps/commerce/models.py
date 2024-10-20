@@ -14,6 +14,8 @@ from django.db import transaction
 from abc import ABC, abstractmethod
 from apps.common.models import TreeNode
 from django.utils.translation import gettext_lazy as _
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 import logging
 
@@ -468,12 +470,12 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
         DECREASE_ADJUSTMENT = "DECREASE_ADJUSTMENT", "Decrease Adjustment"
 
     id = Base58UUIDv5Field(primary_key=True)
-    cart = models.ForeignKey("Cart", related_name="items", on_delete=models.CASCADE)
+    cart = models.ForeignKey("Cart", related_name="line_items", on_delete=models.CASCADE)
     item_type = models.CharField(max_length=25, choices=ItemType.choices)
     quantity = models.PositiveIntegerField(default=1)
     unit_price_usd_cents = models.PositiveIntegerField(null=True, blank=True)
     unit_price_points = models.PositiveIntegerField(null=True, blank=True)
-    bounty = models.ForeignKey("product_management.Bounty", on_delete=models.CASCADE, related_name='cart_items')
+    bounty = models.ForeignKey("product_management.Bounty", on_delete=models.CASCADE, related_name='cart_items', null=True, blank=True)
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
     funding_type = models.CharField(max_length=10, choices=[('USD', 'USD'), ('POINTS', 'Points')], default='USD')
 
@@ -533,6 +535,12 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
 
     class Meta:
         unique_together = ("cart", "bounty")
+
+    @classmethod
+    def create(cls, **kwargs):
+        if kwargs.get('item_type') == cls.ItemType.PLATFORM_FEE:
+            kwargs['bounty'] = None
+        return cls.objects.create(**kwargs)
 
 
 class Cart(TimeStampMixin):
@@ -673,22 +681,61 @@ class Cart(TimeStampMixin):
         return total
 
     def update_totals(self):
-        self.total_usd_cents_excluding_fees_and_taxes = self.items.aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
-        self.total_fees_usd_cents = getattr(self.platform_fee_item, 'amount_cents', 0) if hasattr(self, 'platform_fee_item') else 0
-        self.total_taxes_usd_cents = getattr(self.sales_tax_item, 'amount_cents', 0) if hasattr(self, 'sales_tax_item') else 0
-        self.total_usd_cents_including_fees_and_taxes = (
-            self.total_usd_cents_excluding_fees_and_taxes +
-            self.total_fees_usd_cents +
-            self.total_taxes_usd_cents
-        )
+        logger.info(f"Updating totals for Cart {self.id}")
+        # Calculate totals from CartLineItems
+        total_excluding_fees = self.line_items.filter(
+            item_type=CartLineItem.ItemType.BOUNTY
+        ).aggregate(
+            total=Sum('unit_price_usd_cents')
+        )['total'] or 0
+
+        total_including_fees = self.line_items.aggregate(
+            total=Sum('unit_price_usd_cents')
+        )['total'] or 0
+
+        logger.info(f"Calculated totals for Cart {self.id}: excluding fees: {total_excluding_fees}, including fees: {total_including_fees}")
+
+        # Update Cart totals
+        self.total_usd_cents_excluding_fees_and_taxes = total_excluding_fees
+        self.total_usd_cents_including_fees_and_taxes = total_including_fees
         self.save()
 
+        logger.info(f"Updated Cart {self.id} totals: excluding fees: {self.total_usd_cents_excluding_fees_and_taxes}, including fees: {self.total_usd_cents_including_fees_and_taxes}")
+
+        # Update associated SalesOrder
+        try:
+            sales_order = self.salesorder
+            logger.info(f"Updating SalesOrder {sales_order.id} for Cart {self.id}")
+            sales_order.total_usd_cents_excluding_fees_and_taxes = total_excluding_fees
+            sales_order.total_usd_cents_including_fees_and_taxes = total_including_fees
+            sales_order.save()
+            logger.info(f"Updated SalesOrder {sales_order.id} totals: excluding fees: {sales_order.total_usd_cents_excluding_fees_and_taxes}, including fees: {sales_order.total_usd_cents_including_fees_and_taxes}")
+        except SalesOrder.DoesNotExist:
+            logger.warning(f"Cart {self.id} has no associated SalesOrder")
+
+    def get_or_create_sales_order(self):
+        from apps.commerce.models import SalesOrder  # Import here to avoid circular import
+        sales_order, created = SalesOrder.objects.get_or_create(
+            cart=self,
+            defaults={
+                'organisation': self.organisation,
+                'status': SalesOrder.OrderStatus.PENDING,
+            }
+        )
+        if created:
+            sales_order.recalculate_totals()
+        return sales_order
+
     def save(self, *args, **kwargs):
-        if not self.pk:  # If this is a new cart
-            super().save(*args, **kwargs)  # Save first to get a primary key
-            self.update_totals()  # Then update totals
-        else:
-            super().save(*args, **kwargs)
+        if not self._state.adding and not getattr(self, '_updating_totals', False):
+            self._updating_totals = True
+            self.update_totals()
+            self._updating_totals = False
+        super().save(*args, **kwargs)
+
+    @property
+    def sales_order(self):
+        return getattr(self, 'associated_sales_order', None)
 
 
 class SalesOrder(TimeStampMixin):
@@ -700,10 +747,10 @@ class SalesOrder(TimeStampMixin):
         REFUNDED = "Refunded", "Refunded"
 
     id = Base58UUIDv5Field(primary_key=True)
-    cart = models.OneToOneField(Cart, on_delete=models.CASCADE)
-    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name='sales_orders')
-    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
+    cart = models.OneToOneField(Cart, on_delete=models.CASCADE, related_name='salesorder')
+    organisation = models.ForeignKey('Organisation', on_delete=models.CASCADE)
     total_usd_cents_excluding_fees_and_taxes = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
     total_fees_usd_cents = models.PositiveIntegerField(default=0)
     total_taxes_usd_cents = models.PositiveIntegerField(default=0)
     total_usd_cents_including_fees_and_taxes = models.PositiveIntegerField(default=0)
@@ -713,9 +760,10 @@ class SalesOrder(TimeStampMixin):
         return f"Sales Order {self.id} for Cart {self.cart.id}"
 
     def save(self, *args, **kwargs):
-        self.total_usd_cents_including_fees_and_taxes = (
-            self.total_usd_cents_excluding_fees_and_taxes + self.total_fees_usd_cents + self.total_taxes_usd_cents
-        )
+        if not self._state.adding and not getattr(self, '_updating_totals', False):
+            self._updating_totals = True
+            self.update_totals()
+            self._updating_totals = False
         super().save(*args, **kwargs)
 
     def create_line_items(self):
@@ -749,9 +797,38 @@ class SalesOrder(TimeStampMixin):
             )
 
     def update_totals(self):
-        self.total_usd_cents = (
-            self.line_items.aggregate(total=Sum("unit_price_cents", field="unit_price_cents * quantity"))["total"] or 0
+        # Calculate total excluding fees and taxes
+        self.total_usd_cents_excluding_fees_and_taxes = self.line_items.filter(
+            item_type=SalesOrderLineItem.ItemType.BOUNTY
+        ).aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
+
+        # Calculate fees
+        self.total_fees_usd_cents = self.line_items.filter(
+            item_type=SalesOrderLineItem.ItemType.PLATFORM_FEE
+        ).aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
+
+        # Calculate taxes
+        self.total_taxes_usd_cents = self.line_items.filter(
+            item_type=SalesOrderLineItem.ItemType.SALES_TAX
+        ).aggregate(total=Sum('unit_price_usd_cents'))['total'] or 0
+
+        # Calculate total including fees and taxes
+        self.total_usd_cents_including_fees_and_taxes = (
+            self.total_usd_cents_excluding_fees_and_taxes +
+            self.total_fees_usd_cents +
+            self.total_taxes_usd_cents
         )
+        if not getattr(self, '_updating_totals', False):
+            self.save()
+
+    def recalculate_totals(self):
+        cart_items = self.cart.items.all()
+        bounty_total = sum(item.unit_price_usd_cents for item in cart_items if item.item_type == CartLineItem.ItemType.BOUNTY)
+        platform_fee = sum(item.unit_price_usd_cents for item in cart_items if item.item_type == CartLineItem.ItemType.PLATFORM_FEE)
+        
+        self.total_usd_cents_excluding_fees_and_taxes = bounty_total
+        self.total_usd_cents_including_fees_and_taxes = bounty_total + platform_fee
+        self.save()
 
     @transaction.atomic
     def process_payment(self):
@@ -766,11 +843,11 @@ class SalesOrder(TimeStampMixin):
 
         try:
             if self._process_usd_payment():
-                self.status = self.OrderStatus.COMPLETED  # Change this line
+                self.status = self.OrderStatus.COMPLETED
                 self.save()
                 logger.info(f"Payment processed successfully for order {self.id}")
                 self._provision_bounties()
-                self.cart.status = Cart.CartStatus.COMPLETED
+                self.cart.status = Cart.CartStatus.CHECKED_OUT
                 self.cart.save()
                 return True
             else:
@@ -815,6 +892,10 @@ class SalesOrder(TimeStampMixin):
     def person(self):
         return self.cart.person
 
+    def save(self, *args, **kwargs):
+        if not self.organisation_id and self.cart:
+            self.organisation = self.cart.organisation
+        super().save(*args, **kwargs)
 
 
 class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
@@ -1091,6 +1172,26 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
         if not crypto_wallet_address:
             raise ValueError("Crypto wallet address is required for contributor USDT withdrawals.")
         return True
+
+@receiver(post_save, sender=Cart)
+def create_sales_order(sender, instance, created, **kwargs):
+    if created:
+        SalesOrder.objects.create(cart=instance, organisation=instance.organisation)
+        logger.info(f"Created SalesOrder for Cart {instance.id}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
