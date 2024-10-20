@@ -16,6 +16,7 @@ from apps.common.models import TreeNode
 from django.utils.translation import gettext_lazy as _
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from apps.product_management.models import Bounty  # Add this import at the top of the file
 
 import logging
 
@@ -990,7 +991,8 @@ class PointOrder(TimeStampMixin):
         if self.status != "COMPLETED":
             return False
 
-        self.product_account.add_points(self.total_points)
+        self.product_account.balance += self.total_points
+        self.product_account.save()
         self.status = "REFUNDED"
         self.save()
         self._create_refund_transactions()
@@ -998,38 +1000,34 @@ class PointOrder(TimeStampMixin):
         return True
 
     def _create_point_transactions(self):
-        for item in self.cart.items.filter(funding_type="Points"):
+        for item in self.cart.line_items.filter(funding_type="POINTS"):
             PointTransaction.objects.create(
                 product_account=self.product_account,
-                amount=item.funding_amount,
-                transaction_type="USE",
+                amount=item.unit_price_points,
+                transaction_type="PURCHASE",
                 description=f"Points used for Bounty: {item.bounty.title}",
             )
 
     def _create_refund_transactions(self):
-        for item in self.cart.items.filter(funding_type="Points"):
+        for item in self.cart.line_items.filter(funding_type="POINTS"):
             PointTransaction.objects.create(
                 product_account=self.product_account,
-                amount=item.funding_amount,
+                amount=item.unit_price_points,
                 transaction_type="REFUND",
                 description=f"Points refunded for Bounty: {item.bounty.title}",
             )
 
     def _activate_purchases(self):
-        for item in self.cart.items.filter(funding_type="Points"):
+        for item in self.cart.line_items.filter(funding_type="POINTS"):
             bounty = item.bounty
-            if bounty.challenge:
-                self._activate_challenge(bounty.challenge)
-            elif bounty.competition:
-                self._activate_competition(bounty.competition)
+            bounty.status = Bounty.BountyStatus.OPEN
+            bounty.save()
 
     def _deactivate_purchases(self):
-        for item in self.cart.items.filter(funding_type="Points"):
+        for item in self.cart.line_items.filter(funding_type="POINTS"):
             bounty = item.bounty
-            if bounty.challenge:
-                self._deactivate_challenge(bounty.challenge)
-            elif bounty.competition:
-                self._deactivate_competition(bounty.competition)
+            bounty.status = Bounty.BountyStatus.DRAFT
+            bounty.save()
 
     def _activate_challenge(self, challenge):
         Challenge = apps.get_model("product_management", "Challenge")
