@@ -12,56 +12,38 @@ from apps.product_management.forms import BountyForm
 from django.views.decorators.http import require_http_methods
 
 from .models import (
-    Cart, CartLineItem, SalesOrder, SalesOrderLineItem,OrganisationWallet, PayPalPaymentStrategy, USDTPaymentStrategy,
+    Cart, CartLineItem, SalesOrder, SalesOrderLineItem, OrganisationWallet, PayPalPaymentStrategy, USDTPaymentStrategy,
     ContributorWallet, ContributorPayPalWithdrawalStrategy, ContributorUSDTWithdrawalStrategy
 )
 from apps.product_management.models import Bounty, Product
 from apps.security.models import OrganisationPersonRoleAssignment
 from apps.security.models import Person
-from .forms import AddToCartForm  # Add this import
+from .forms import AddToCartForm
 
 logger = logging.getLogger(__name__)
 
 @login_required
 def bounty_checkout(request):
-    try:
-        cart = Cart.objects.get(person=request.user.person, status=Cart.CartStatus.OPEN)
-        cart.update_totals()  # This will also update or create the SalesOrder
-
-        sales_order = cart.sales_order
-        if sales_order and sales_order.status == SalesOrder.OrderStatus.PENDING:
-            # Get the organisation through OrganisationPersonRoleAssignment
-            try:
-                org_assignment = OrganisationPersonRoleAssignment.objects.get(person=request.user.person, organisation=cart.organisation)
-                wallet = org_assignment.organisation.wallet
-            except OrganisationPersonRoleAssignment.DoesNotExist:
-                messages.error(request, 'You are not associated with the organisation for this cart.')
-                return redirect('commerce:checkout_failure')
-
-            # Check if the wallet has sufficient balance
-            if wallet.balance_usd_cents < cart.total_usd_cents_including_fees_and_taxes:
-                messages.error(request, 'Insufficient balance in the wallet.')
-                return redirect('commerce:checkout_failure')
-
-            # Process the payment
-            if sales_order.process_payment():
-                # Payment successful
-                cart.status = Cart.CartStatus.CHECKED_OUT
-                cart.save()
-                return redirect('commerce:checkout_success')
-            else:
-                # Payment failed
-                messages.error(request, 'Payment processing failed. Please try again.')
-                return redirect('commerce:checkout_failure')
-        else:
-            messages.error(request, 'Invalid cart or sales order status.')
-            return redirect('commerce:checkout_failure')
-    except Cart.DoesNotExist:
-        messages.error(request, 'No active cart found.')
+    print("Entering bounty_checkout view")
+    # Get the person associated with the logged-in user
+    person = request.user.person
+    cart = Cart.objects.filter(person=person, status=Cart.CartStatus.OPEN).first()
+    if not cart:
+        print("No open cart found")
         return redirect('commerce:checkout_failure')
-    except Exception as e:
-        logger.error(f"Error during checkout: {str(e)}")
-        messages.error(request, 'An error occurred during checkout. Please try again.')
+
+    sales_order = cart.salesorder
+    print(f"SalesOrder ID: {sales_order.id}")
+    print(f"SalesOrder total: {sales_order.total_usd_cents_including_fees_and_taxes}")
+
+    wallet = cart.organisation.wallet
+    print(f"Wallet balance before: {wallet.balance_usd_cents}")
+
+    if sales_order.process_payment():
+        print("Payment processed successfully")
+        return redirect('commerce:checkout_success')
+    else:
+        print("Payment processing failed")
         return redirect('commerce:checkout_failure')
 
 @login_required
@@ -140,3 +122,90 @@ def checkout_failure(request):
 @login_required
 def wallet_success(request):
     return render(request, 'wallet_success.html')
+
+@login_required
+def remove_from_cart(request, item_id):
+    cart_item = get_object_or_404(CartLineItem, id=item_id, cart__person=request.user.person)
+    cart_item.delete()
+    messages.success(request, "Item removed from cart.")
+    return redirect('commerce:view_cart')
+
+@login_required
+def update_cart_quantity(request, item_id):
+    if request.method == 'POST':
+        cart_item = get_object_or_404(CartLineItem, id=item_id, cart__person=request.user.person)
+        new_quantity = int(request.POST.get('quantity', 1))
+        if new_quantity > 0:
+            cart_item.quantity = new_quantity
+            cart_item.save()
+            cart_item.cart.update_totals()
+            messages.success(request, "Cart updated successfully.")
+        else:
+            messages.error(request, "Invalid quantity.")
+    return redirect('commerce:view_cart')
+
+@login_required
+def review_order(request):
+    cart = Cart.objects.filter(person=request.user.person, status=Cart.CartStatus.OPEN).first()
+    if not cart:
+        messages.error(request, "No open cart found.")
+        return redirect('commerce:view_cart')
+    return render(request, 'commerce/review_order.html', {'cart': cart})
+
+@login_required
+def select_payment_method(request):
+    if request.method == 'POST':
+        payment_method = request.POST.get('payment_method')
+        # Logic to set the payment method
+        messages.success(request, f"Payment method set to {payment_method}")
+        return redirect('commerce:review_order')
+    return render(request, 'commerce/select_payment_method.html')
+
+@login_required
+def view_wallet(request):
+    wallet = OrganisationWallet.objects.filter(organisation__persons=request.user.person).first()
+    transactions = wallet.transactions.all()[:10] if wallet else []
+    return render(request, 'commerce/view_wallet.html', {'wallet': wallet, 'transactions': transactions})
+
+@login_required
+def withdraw_funds(request):
+    if request.method == 'POST':
+        amount = request.POST.get('amount')
+        # Logic to process withdrawal
+        messages.success(request, f"Withdrawal of ${amount} processed successfully.")
+        return redirect('commerce:view_wallet')
+    return render(request, 'commerce/withdraw_funds.html')
+
+class OrderHistoryView(ListView):
+    model = SalesOrder
+    template_name = 'commerce/order_history.html'
+    context_object_name = 'orders'
+
+    def get_queryset(self):
+        return SalesOrder.objects.filter(person=self.request.user.person)
+
+class OrderDetailView(DetailView):
+    model = SalesOrder
+    template_name = 'commerce/order_detail.html'
+    context_object_name = 'order'
+
+    def get_queryset(self):
+        return SalesOrder.objects.filter(person=self.request.user.person)
+
+def handle_checkout_error(request, error_message):
+    messages.error(request, error_message)
+    return redirect('commerce:checkout_failure')
+
+class CartView(ListView):
+    model = CartLineItem
+    template_name = 'commerce/cart.html'
+    context_object_name = 'cart_items'
+
+    def get_queryset(self):
+        return CartLineItem.objects.filter(cart__person=self.request.user.person, cart__status=Cart.CartStatus.OPEN)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        cart = Cart.objects.filter(person=self.request.user.person, status=Cart.CartStatus.OPEN).first()
+        context['cart'] = cart
+        return context

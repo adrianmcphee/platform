@@ -833,31 +833,24 @@ class SalesOrder(TimeStampMixin):
 
     @transaction.atomic
     def process_payment(self):
-        logger.info(f"Starting payment processing for sales order {self.id}")
-        
+        print(f"Processing payment for SalesOrder {self.id}")
         if self.status != self.OrderStatus.PENDING:
-            logger.warning(f"Cannot process payment for order {self.id}. Current status: {self.status}")
+            print(f"Cannot process payment. Current status: {self.status}")
             return False
 
-        self.status = self.OrderStatus.PAYMENT_PROCESSING
-        self.save()
+        wallet = self.organisation.wallet
+        total_amount = self.total_usd_cents_including_fees_and_taxes
+        print(f"Attempting to deduct {total_amount} cents from wallet")
 
-        try:
-            if self._process_usd_payment():
-                self.status = self.OrderStatus.COMPLETED
-                self.save()
-                logger.info(f"Payment processed successfully for order {self.id}")
-                self._provision_bounties()
-                self.cart.status = Cart.CartStatus.CHECKED_OUT
-                self.cart.save()
-                return True
-            else:
-                raise Exception("Payment processing failed")
-
-        except Exception as e:
-            logger.error(f"Payment processing failed for order {self.id}: {str(e)}")
-            self.status = self.OrderStatus.PAYMENT_FAILED
+        if wallet.deduct_funds(total_amount, f"Payment for order {self.id}"):
+            self.status = self.OrderStatus.COMPLETED
             self.save()
+            self.cart.status = Cart.CartStatus.CHECKED_OUT
+            self.cart.save()
+            print("Payment successful, order completed")
+            return True
+        else:
+            print("Insufficient funds in wallet")
             return False
 
     def _process_usd_payment(self):
