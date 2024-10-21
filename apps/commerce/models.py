@@ -17,6 +17,7 @@ from django.utils.translation import gettext_lazy as _
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from apps.product_management.models import Bounty  # Add this import at the top of the file
+from decimal import Decimal
 
 import logging
 
@@ -559,13 +560,16 @@ class Cart(TimeStampMixin):
         self.total_usd_cents_excluding_fees_and_taxes = sum(
             item.unit_price_usd_cents * item.quantity
             for item in line_items
-            if item.item_type != CartLineItem.ItemType.PLATFORM_FEE
+            if item.item_type not in [CartLineItem.ItemType.PLATFORM_FEE, CartLineItem.ItemType.SALES_TAX]
         )
         
         # Calculate and add platform fee
         platform_fee_config = PlatformFeeConfiguration.get_active_configuration()
         platform_fee_rate = platform_fee_config.percentage_decimal
         platform_fee = int(self.total_usd_cents_excluding_fees_and_taxes * platform_fee_rate)
+        
+        # Calculate sales tax
+        sales_tax = self.calculate_sales_tax()
         
         # Create or update platform fee line item
         platform_fee_item, created = CartLineItem.objects.update_or_create(
@@ -577,15 +581,43 @@ class Cart(TimeStampMixin):
             }
         )
         
-        self.total_usd_cents_including_fees_and_taxes = self.total_usd_cents_excluding_fees_and_taxes + platform_fee
+        # Create or update sales tax line item
+        sales_tax_item, created = CartLineItem.objects.update_or_create(
+            cart=self,
+            item_type=CartLineItem.ItemType.SALES_TAX,
+            defaults={
+                'quantity': 1,
+                'unit_price_usd_cents': sales_tax,
+            }
+        )
+        
+        self.total_usd_cents_including_fees_and_taxes = (
+            self.total_usd_cents_excluding_fees_and_taxes + platform_fee + sales_tax
+        )
         
         self.save()
         self.update_sales_order()
 
     def calculate_sales_tax(self):
-        # Implement sales tax calculation logic here
-        # This is a placeholder, adjust as needed
-        return 0
+        """
+        Calculate the sales tax based on the cart total and the organization's location.
+        """
+        # Get the tax rate based on the organization's country
+        tax_rate = self.get_tax_rate()
+        
+        # Calculate the taxable amount (excluding platform fees)
+        taxable_amount = self.total_usd_cents_excluding_fees_and_taxes
+        
+        # Calculate the tax
+        tax_amount = int(taxable_amount * tax_rate)
+        
+        return tax_amount
+
+    def get_tax_rate(self):
+        """
+        Get the tax rate based on the organization's country.
+        """
+        return TaxRate.get_rate(self.organisation.country)
 
     def add_adjustment(self, bounty_bid, amount_cents, is_increase=True):
         item_type = (
@@ -627,6 +659,8 @@ class Cart(TimeStampMixin):
         sales_order, created = SalesOrder.objects.get_or_create(cart=self)
         sales_order.total_usd_cents_excluding_fees_and_taxes = self.total_usd_cents_excluding_fees_and_taxes
         sales_order.total_usd_cents_including_fees_and_taxes = self.total_usd_cents_including_fees_and_taxes
+        sales_order.total_fees_usd_cents = self.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).aggregate(total=models.Sum('unit_price_usd_cents'))['total'] or 0
+        sales_order.total_taxes_usd_cents = self.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).aggregate(total=models.Sum('unit_price_usd_cents'))['total'] or 0
         sales_order.save()
 
     @property
@@ -948,6 +982,20 @@ class PointOrder(TimeStampMixin):
             competition.save()
         # TODO: Add additional deactivation logic if needed
 
+class TaxRate(models.Model):
+    country_code = models.CharField(max_length=2, unique=True, help_text="ISO 3166-1 alpha-2 country code")
+    rate = models.DecimalField(max_digits=5, decimal_places=4, help_text="Tax rate as a decimal (e.g., 0.20 for 20%)")
+    name = models.CharField(max_length=100, help_text="Name of the tax (e.g., VAT, GST)")
+
+    def __str__(self):
+        return f"{self.country_code} - {self.name}: {self.rate:.2%}"
+
+    @classmethod
+    def get_rate(cls, country_code):
+        try:
+            return cls.objects.get(country_code=country_code).rate
+        except cls.DoesNotExist:
+            return cls.objects.get(country_code='OT').rate  # Default rate for other countries
 
 class PaymentStrategy(ABC):
 
@@ -1068,6 +1116,5 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
 @receiver(post_save, sender=Cart)
 def create_or_update_sales_order(sender, instance, created, **kwargs):
     instance.update_sales_order()
-
 
 

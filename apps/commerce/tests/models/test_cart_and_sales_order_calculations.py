@@ -1,6 +1,7 @@
 import pytest
 import logging
-from apps.commerce.models import Cart, SalesOrder, CartLineItem, Organisation, PlatformFeeConfiguration
+from decimal import Decimal
+from apps.commerce.models import Cart, SalesOrder, CartLineItem, Organisation, PlatformFeeConfiguration, TaxRate
 from apps.product_management.models import Bounty, Product
 from apps.talent.models import Person
 from apps.security.models import User
@@ -40,6 +41,10 @@ def setup_data():
     sales_order = SalesOrder.objects.get(cart=cart)
     
     logger.info(f"Setup data created: Cart {cart.id}, SalesOrder {sales_order.id}")
+    
+    # Create a TaxRate for the US (assuming 10% for this example)
+    TaxRate.objects.create(country_code='US', rate=Decimal('0.10'), name='US Sales Tax')
+    
     return person, organisation, cart, sales_order, bounty, product
 
 @pytest.mark.django_db
@@ -78,9 +83,17 @@ def test_cart_and_sales_order_totals_match(setup_data):
     expected_fee = int(bounty.reward_in_usd_cents * 0.05)
     assert platform_fee_item.unit_price_usd_cents == expected_fee
 
-    # Check total calculations
+    # Check that the sales tax was automatically added
+    sales_tax_item = cart.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).first()
+    assert sales_tax_item is not None
+
+    # Calculate expected tax (10% of bounty amount)
+    expected_tax = int(bounty.reward_in_usd_cents * 0.10)
+    assert sales_tax_item.unit_price_usd_cents == expected_tax
+
+    # Check total calculations including tax
     assert cart.total_usd_cents_excluding_fees_and_taxes == bounty.reward_in_usd_cents
-    assert cart.total_usd_cents_including_fees_and_taxes == bounty.reward_in_usd_cents + expected_fee
+    assert cart.total_usd_cents_including_fees_and_taxes == bounty.reward_in_usd_cents + expected_fee + expected_tax
 
 @pytest.mark.django_db
 def test_cart_update_totals_updates_sales_order(setup_data):
@@ -178,6 +191,38 @@ def test_multiple_bounties_and_fees(setup_data):
     expected_fee = int(15000 * 0.05)
     assert platform_fee_item.unit_price_usd_cents == expected_fee
 
-    # Check total calculations
+    # Calculate expected tax (10% of total bounty amount)
+    expected_tax = int(15000 * 0.10)
+    sales_tax_item = cart.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).first()
+    assert sales_tax_item is not None
+    assert sales_tax_item.unit_price_usd_cents == expected_tax
+
+    # Check total calculations including tax
     assert cart.total_usd_cents_excluding_fees_and_taxes == 15000
-    assert cart.total_usd_cents_including_fees_and_taxes == 15000 + expected_fee
+    assert cart.total_usd_cents_including_fees_and_taxes == 15000 + expected_fee + expected_tax
+
+@pytest.mark.django_db
+def test_different_country_tax_rates(setup_data):
+    person, organisation, cart, sales_order, bounty, product = setup_data
+    
+    # Create TaxRates for different countries
+    TaxRate.objects.create(country_code='GB', rate=Decimal('0.20'), name='UK VAT')
+    TaxRate.objects.create(country_code='JP', rate=Decimal('0.08'), name='Japan Consumption Tax')
+    
+    # Test with UK VAT
+    organisation.country = 'GB'
+    organisation.save()
+    cart.update_totals()
+    
+    uk_tax_item = cart.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).first()
+    assert uk_tax_item is not None
+    assert uk_tax_item.unit_price_usd_cents == int(bounty.reward_in_usd_cents * 0.20)
+    
+    # Test with Japan Consumption Tax
+    organisation.country = 'JP'
+    organisation.save()
+    cart.update_totals()
+    
+    jp_tax_item = cart.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).first()
+    assert jp_tax_item is not None
+    assert jp_tax_item.unit_price_usd_cents == int(bounty.reward_in_usd_cents * 0.08)

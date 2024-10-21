@@ -47,7 +47,8 @@ class Command(BaseCommand):
             'pointorder': PointOrderParser(),
             'competitionentry': CompetitionEntryParser(),
             'competitionentryrating': CompetitionEntryRatingParser(),
-            'product': ProductParser(),  # Add this line
+            'product': ProductParser(),
+            'taxrate': TaxRateParser(),  # Add this line
         }
         return parsers.get(model._meta.model_name.lower(), ModelParser())
 
@@ -692,3 +693,26 @@ class ProductParser(ModelParser):
             parsed_row['visibility'] = Product.Visibility(parsed_row['visibility'])
         
         return parsed_row
+
+class TaxRateParser(ModelParser):
+    def parse_row(self, row):
+        parsed_row = super().parse_row(row)
+        
+        # Convert rate to Decimal
+        if 'rate' in parsed_row:
+            parsed_row['rate'] = Decimal(parsed_row['rate'])
+        
+        return parsed_row
+
+    def create_object(self, model, row):
+        parsed = self.parse_row(row)
+        
+        tax_rate, created = model.objects.update_or_create(
+            country_code=parsed['country_code'],
+            defaults={
+                'rate': parsed['rate'],
+                'name': parsed['name'],
+            }
+        )
+        
+        return tax_rate, created

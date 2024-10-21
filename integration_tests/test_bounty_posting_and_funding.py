@@ -1,7 +1,7 @@
 import pytest
 from django.urls import reverse
 from django.contrib.auth import get_user_model
-from apps.commerce.models import Cart, SalesOrder, OrganisationWallet, Organisation, CartLineItem, OrganisationWalletTransaction
+from apps.commerce.models import Cart, SalesOrder, OrganisationWallet, Organisation, CartLineItem, OrganisationWalletTransaction, TaxRate
 from apps.product_management.models import Bounty, Product, Challenge, Competition
 from apps.talent.models import Person
 from apps.security.models import User, OrganisationPersonRoleAssignment
@@ -11,6 +11,7 @@ import base58
 from django.conf import settings
 import logging
 from unittest.mock import patch, PropertyMock, MagicMock
+from decimal import Decimal
 
 User = get_user_model()
 
@@ -179,6 +180,9 @@ def test_successful_bounty_checkout_with_sufficient_balance(mock_deduct_funds, c
         funding_type='USD'
     )
 
+    # Create a TaxRate for the organization's country
+    TaxRate.objects.create(country_code=organisation.country, rate=Decimal('0.10'), name='Test Tax')
+
     # Update totals
     cart.update_totals()
 
@@ -221,7 +225,8 @@ def test_successful_bounty_checkout_with_sufficient_balance(mock_deduct_funds, c
     ).first()
     assert transaction is not None
 
-    expected_deduction = bounty.reward_in_usd_cents + platform_fee_cents
+    expected_tax = int(bounty.reward_in_usd_cents * 0.10)
+    expected_deduction = bounty.reward_in_usd_cents + platform_fee_cents + expected_tax
     print(f"Expected deduction: {expected_deduction}")
     expected_balance = initial_balance - expected_deduction
 
@@ -252,6 +257,11 @@ def test_successful_bounty_checkout_with_sufficient_balance(mock_deduct_funds, c
         description=f"Payment for order {sales_order.id}"
     ).first()
     assert transaction is not None
+
+    # Check for the sales tax line item
+    sales_tax_item = cart.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).first()
+    assert sales_tax_item is not None
+    assert sales_tax_item.unit_price_usd_cents == expected_tax
 
 @pytest.mark.django_db
 @patch('apps.commerce.models.Cart.update_totals')
@@ -493,6 +503,7 @@ def test_bounty_checkout_view_handling(mock_process_payment, mock_update_totals,
 
     sales_order = SalesOrder.objects.get(cart=cart)
     assert sales_order.status == SalesOrder.OrderStatus.COMPLETED
+
 
 
 
