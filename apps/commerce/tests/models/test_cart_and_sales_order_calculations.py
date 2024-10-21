@@ -28,13 +28,16 @@ def setup_data():
         product=product
     )
 
+    # Ensure a PlatformFeeConfiguration exists
+    PlatformFeeConfiguration.objects.create(
+        percentage=5,
+        applies_from_date=timezone.now() - timezone.timedelta(days=1)  # Make sure it's active
+    )
+
     cart = Cart.objects.create(person=person, organisation=organisation)
     
     # Ensure the SalesOrder is created with the correct organisation
     sales_order = SalesOrder.objects.get(cart=cart)
-    
-    # Create a PlatformFeeConfiguration
-    PlatformFeeConfiguration.objects.create(percentage=5, applies_from_date=timezone.now())
     
     logger.info(f"Setup data created: Cart {cart.id}, SalesOrder {sales_order.id}")
     return person, organisation, cart, sales_order, bounty, product
