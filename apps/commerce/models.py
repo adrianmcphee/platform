@@ -439,6 +439,10 @@ class PlatformFeeConfiguration(TimeStampMixin):
     percentage = models.PositiveIntegerField(default=10, validators=[MinValueValidator(1), MaxValueValidator(100)])
     applies_from_date = models.DateTimeField()
 
+    @property
+    def percentage_decimal(self):
+        return Decimal(self.percentage) / Decimal(100)
+
     @classmethod
     def get_active_configuration(cls):
         active_config = cls.objects.filter(applies_from_date__lte=timezone.now()).order_by('-applies_from_date').first()
@@ -446,10 +450,6 @@ class PlatformFeeConfiguration(TimeStampMixin):
             # Return a default configuration or raise a specific exception
             return cls(percentage=5)  # Default 5% fee
         return active_config
-
-    @property
-    def percentage_decimal(self):
-        return self.percentage / 100
 
     def __str__(self):
         return f"{self.percentage}% Platform Fee (from {self.applies_from_date})"
@@ -563,55 +563,54 @@ class Cart(TimeStampMixin):
             if item.item_type not in [CartLineItem.ItemType.PLATFORM_FEE, CartLineItem.ItemType.SALES_TAX]
         )
         
-        # Calculate and add platform fee
+        # Calculate and add platform fee in cents
         platform_fee_config = PlatformFeeConfiguration.get_active_configuration()
-        platform_fee_rate = platform_fee_config.percentage_decimal
-        platform_fee = int(self.total_usd_cents_excluding_fees_and_taxes * platform_fee_rate)
+        platform_fee_cents = int(self.total_usd_cents_excluding_fees_and_taxes * platform_fee_config.percentage_decimal)
         
-        # Calculate sales tax
-        sales_tax = self.calculate_sales_tax()
+        # Calculate sales tax in cents
+        sales_tax_cents = self.calculate_sales_tax_cents()
         
         # Create or update platform fee line item
-        platform_fee_item, created = CartLineItem.objects.update_or_create(
+        CartLineItem.objects.update_or_create(
             cart=self,
             item_type=CartLineItem.ItemType.PLATFORM_FEE,
             defaults={
                 'quantity': 1,
-                'unit_price_usd_cents': platform_fee,
+                'unit_price_usd_cents': platform_fee_cents,
             }
         )
         
         # Create or update sales tax line item
-        sales_tax_item, created = CartLineItem.objects.update_or_create(
+        CartLineItem.objects.update_or_create(
             cart=self,
             item_type=CartLineItem.ItemType.SALES_TAX,
             defaults={
                 'quantity': 1,
-                'unit_price_usd_cents': sales_tax,
+                'unit_price_usd_cents': sales_tax_cents,
             }
         )
         
         self.total_usd_cents_including_fees_and_taxes = (
-            self.total_usd_cents_excluding_fees_and_taxes + platform_fee + sales_tax
+            self.total_usd_cents_excluding_fees_and_taxes + platform_fee_cents + sales_tax_cents
         )
         
-        self.save()
+        self.save(updating_totals=True)
         self.update_sales_order()
 
-    def calculate_sales_tax(self):
+    def calculate_sales_tax_cents(self):
         """
-        Calculate the sales tax based on the cart total and the organization's location.
+        Calculate the sales tax in cents based on the cart total and the organization's location.
         """
         # Get the tax rate based on the organization's country
-        tax_rate = self.get_tax_rate()
+        tax_rate = TaxRate.get_rate(self.organisation.country)
         
-        # Calculate the taxable amount (excluding platform fees)
-        taxable_amount = self.total_usd_cents_excluding_fees_and_taxes
+        # Calculate the taxable amount in cents (excluding platform fees)
+        taxable_amount_cents = self.total_usd_cents_excluding_fees_and_taxes
         
-        # Calculate the tax
-        tax_amount = int(taxable_amount * tax_rate)
+        # Calculate the tax in cents
+        tax_amount_cents = int(taxable_amount_cents * tax_rate)
         
-        return tax_amount
+        return tax_amount_cents
 
     def get_tax_rate(self):
         """
@@ -1116,5 +1115,4 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
 @receiver(post_save, sender=Cart)
 def create_or_update_sales_order(sender, instance, created, **kwargs):
     instance.update_sales_order()
-
 
