@@ -9,20 +9,25 @@ from ..models import Product, Challenge, ProductArea, Initiative, Idea, Bug, Bou
 from ..forms import ProductForm, OrganisationForm
 from .. import utils
 from apps.commerce.models import Organisation
-from apps.security.models import ProductRoleAssignment
+from apps.security.models import ProductRoleAssignment, OrganisationPersonRoleAssignment
 from apps.common import mixins as common_mixins
 
 class ProductListView(ListView):
     model = Product
     context_object_name = "products"
-    queryset = Product.objects.filter(is_private=False).order_by("created_at")
-    template_name = "product_management/products.html"
-    paginate_by = 8
+    template_name = "product_management/product_list.html"
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context["challenge_status"] = Challenge.ChallengeStatus
-        return context
+    def get_queryset(self):
+        if self.request.user.is_authenticated:
+            # For authenticated users, show GLOBAL and ORG_ONLY products they have access to
+            user_orgs = OrganisationPersonRoleAssignment.objects.filter(person=self.request.user.person).values_list('organisation', flat=True)
+            return Product.objects.filter(
+                visibility__in=[Product.Visibility.GLOBAL, Product.Visibility.ORG_ONLY],
+                organisation__in=user_orgs
+            ).order_by("created_at")
+        else:
+            # For unauthenticated users, show only GLOBAL products
+            return Product.objects.filter(visibility=Product.Visibility.GLOBAL).order_by("created_at")
 
 class ProductRedirectView(utils.BaseProductDetailView, RedirectView):
     def get(self, request, *args, **kwargs):

@@ -34,7 +34,7 @@ class Command(BaseCommand):
             'skill': SkillParser(),
             'expertise': ExpertiseParser(),
             'bounty': BountyParser(),
-            'bountyskill': BountySkillParser(),  # Add this line
+            'bountyskill': BountySkillParser(),
             'bountybid': BountyBidParser(),
             'platformfee': PlatformFeeParser(),
             'salesorder': SalesOrderParser(),
@@ -47,6 +47,7 @@ class Command(BaseCommand):
             'pointorder': PointOrderParser(),
             'competitionentry': CompetitionEntryParser(),
             'competitionentryrating': CompetitionEntryRatingParser(),
+            'product': ProductParser(),  # Add this line
         }
         return parsers.get(model._meta.model_name.lower(), ModelParser())
 
@@ -681,3 +682,13 @@ class CompetitionEntryRatingParser(ModelParser):
         
         return obj, created
 
+class ProductParser(ModelParser):
+    def parse_row(self, row):
+        parsed_row = super().parse_row(row)
+        
+        # Ensure visibility is correctly set
+        if 'visibility' in parsed_row:
+            from apps.product_management.models import Product
+            parsed_row['visibility'] = Product.Visibility(parsed_row['visibility'])
+        
+        return parsed_row

@@ -10,10 +10,10 @@ from apps.common.mixins import TimeStampMixin
 
 from apps.talent.models import Person
 
-from .constants import DEFAULT_LOGIN_ATTEMPT_BUDGET
-from .managers import UserManager
+from apps.security.constants import DEFAULT_LOGIN_ATTEMPT_BUDGET
+from apps.security.managers import UserManager
 from random import randrange
-from .utils import extract_device_info
+from apps.security.utils import extract_device_info
 from django.contrib.auth import get_user_model
 from apps.common.fields import Base58UUIDv5Field
 
@@ -104,9 +104,9 @@ class ProductRoleAssignment(TimeStampMixin):
     from apps.product_management.models import Product
 
     class ProductRoles(models.TextChoices):
-        CONTRIBUTOR = "Contributor"
-        MANAGER = "Manager"
-        ADMIN = "Admin"
+        MEMBER = "Member", "Member"
+        MANAGER = "Manager", "Manager"
+        ADMIN = "Admin", "Admin"
 
     id = Base58UUIDv5Field(primary_key=True)
     person = models.ForeignKey(Person, on_delete=models.CASCADE)
@@ -114,7 +114,7 @@ class ProductRoleAssignment(TimeStampMixin):
     role = models.CharField(
         max_length=255,
         choices=ProductRoles.choices,
-        default=ProductRoles.CONTRIBUTOR,
+        default=ProductRoles.MEMBER,
     )
 
     def __str__(self):

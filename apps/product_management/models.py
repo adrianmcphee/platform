@@ -69,6 +69,11 @@ class ProductArea(common.AttachmentAbstract, common.TreeNode, TimeStampMixin):
 
 
 class Product(TimeStampMixin, common.AttachmentAbstract):
+    class Visibility(models.TextChoices):
+        GLOBAL = "GLOBAL", "Global"
+        ORG_ONLY = "ORG_ONLY", "Organisation Only"
+        RESTRICTED = "RESTRICTED", "Restricted"
+
     id = Base58UUIDv5Field(primary_key=True)
     person = models.ForeignKey("talent.Person", on_delete=models.CASCADE, null=True, blank=True)
     organisation = models.ForeignKey("commerce.Organisation", on_delete=models.SET_NULL, null=True, blank=True)
@@ -80,7 +85,11 @@ class Product(TimeStampMixin, common.AttachmentAbstract):
     detail_url = models.URLField(blank=True, null=True)
     video_url = models.URLField(blank=True, null=True)
     slug = models.SlugField(unique=True)
-    is_private = models.BooleanField(default=False)
+    visibility = models.CharField(
+        max_length=10,
+        choices=Visibility.choices,
+        default=Visibility.ORG_ONLY
+    )
 
     def get_owner(self):
         if self.organisation:
@@ -139,6 +148,33 @@ class Product(TimeStampMixin, common.AttachmentAbstract):
             return self.product_point_account.balance
         except AttributeError:
             return 0
+
+    def is_visible_to(self, person):
+        if self.visibility == self.Visibility.GLOBAL:
+            return True
+        if self.visibility == self.Visibility.ORG_ONLY:
+            return OrganisationPersonRoleAssignment.objects.filter(
+                person=person, organisation=self.organisation
+            ).exists()
+        if self.visibility == self.Visibility.RESTRICTED:
+            return ProductRoleAssignment.objects.filter(
+                person=person, product=self
+            ).exists()
+        return False
+
+    def can_manage(self, person):
+        return ProductRoleAssignment.objects.filter(
+            person=person,
+            product=self,
+            role__in=[ProductRoleAssignment.ProductRoles.MANAGER, ProductRoleAssignment.ProductRoles.ADMIN]
+        ).exists()
+
+    def can_admin(self, person):
+        return ProductRoleAssignment.objects.filter(
+            person=person,
+            product=self,
+            role=ProductRoleAssignment.ProductRoles.ADMIN
+        ).exists()
 
 class Initiative(TimeStampMixin):
     

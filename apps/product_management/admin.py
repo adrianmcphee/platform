@@ -3,7 +3,7 @@ from django.contrib import admin
 from apps.product_management import models as product
 from apps.commerce.models import Organisation
 from apps.talent.models import Person
-from .models import ProductTree, ProductArea
+from .models import ProductTree, ProductArea, Product
 
 from django.contrib import admin
 from django.urls import reverse
@@ -21,24 +21,12 @@ from django.db import transaction
 
 @admin.register(product.Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ["slug", "name", "person", "organisation", "owner_type", "is_private"]
-    list_filter = ["is_private"]
-    search_fields = ["slug", "name", "person__user__username", "organisation__name"]
-    raw_id_fields = ["person", "organisation"]
-    filter_horizontal = ("attachments",)
+    list_display = ('name', 'slug', 'organisation', 'created_at', 'updated_at', 'visibility')
+    list_filter = ('visibility', 'organisation')
+    search_fields = ('name', 'slug', 'organisation__name')
+    prepopulated_fields = {'slug': ('name',)}
 
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('person', 'organisation')
-
-    def owner_type(self, obj):
-        owner = obj.get_owner()
-        if isinstance(owner, Organisation):
-            return "Organisation"
-        elif isinstance(owner, Person):
-            return "Person"
-        else:
-            return "Unknown"
-    owner_type.short_description = "Owner Type"
+    # Add any other fields or customizations you need for the admin interface
 
 class OwnerTypeFilter(admin.SimpleListFilter):
     title = 'Owner Type'
