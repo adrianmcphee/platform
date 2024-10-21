@@ -544,8 +544,6 @@ class Cart(TimeStampMixin):
     country = models.CharField(max_length=2, help_text="ISO 3166-1 alpha-2 country code of the user")
 
     total_usd_cents_excluding_fees_and_taxes = models.PositiveIntegerField(default=0)
-    total_fees_usd_cents = models.PositiveIntegerField(default=0)
-    total_taxes_usd_cents = models.PositiveIntegerField(default=0)
     total_usd_cents_including_fees_and_taxes = models.PositiveIntegerField(default=0)
 
     def __str__(self):
@@ -559,33 +557,27 @@ class Cart(TimeStampMixin):
 
     def update_totals(self):
         line_items = self.line_items.all()
-
+        
         self.total_usd_cents_excluding_fees_and_taxes = sum(
-            item.total_price_usd_cents
+            item.unit_price_usd_cents * item.quantity
             for item in line_items
-            if item.item_type not in [CartLineItem.ItemType.PLATFORM_FEE, CartLineItem.ItemType.SALES_TAX]
+            if item.item_type != CartLineItem.ItemType.PLATFORM_FEE
         )
-
-        fee_rate = self.calculate_platform_fee_rate()
-        platform_fee = int(self.total_usd_cents_excluding_fees_and_taxes * fee_rate)
-
-        # Create or update the platform fee line item
-        platform_fee_item, created = CartLineItem.objects.get_or_create(
-            cart=self,
-            item_type=CartLineItem.ItemType.PLATFORM_FEE,
-            defaults={"unit_price_usd_cents": platform_fee, "quantity": 1},
+        
+        self.total_usd_cents_including_fees_and_taxes = sum(
+            item.unit_price_usd_cents * item.quantity
+            for item in line_items
         )
-        if not created:
-            platform_fee_item.unit_price_usd_cents = platform_fee
-            platform_fee_item.save()
+        
+        self.save()
 
-        self.total_fees_usd_cents = platform_fee
-        self.total_taxes_usd_cents = sum(
-            item.total_price_usd_cents for item in line_items if item.item_type == CartLineItem.ItemType.SALES_TAX
-        )
+    @property
+    def total_usd_excluding_fees_and_taxes(self):
+        return self.total_usd_cents_excluding_fees_and_taxes / 100
 
-        self.total_usd_cents_including_fees_and_taxes = self.calculate_total_amount()
-        self.save(updating_totals=True)
+    @property
+    def total_usd_including_fees_and_taxes(self):
+        return self.total_usd_cents_including_fees_and_taxes / 100
 
     def calculate_sales_tax(self):
         # Implement sales tax calculation logic here
@@ -712,13 +704,13 @@ class SalesOrder(TimeStampMixin):
     def __str__(self):
         return f"Sales Order {self.id} for Cart {self.cart.id}"
 
-    def calculate_total_amount(self):
-        """
-        Calculate the total amount for the order, including fees and taxes.
-        """
-        subtotal = self.total_usd_cents_excluding_fees_and_taxes
-        total = subtotal + self.total_fees_usd_cents + self.total_taxes_usd_cents
-        return total
+    @property
+    def total_usd_excluding_fees_and_taxes(self):
+        return self.total_usd_cents_excluding_fees_and_taxes / 100
+
+    @property
+    def total_usd_including_fees_and_taxes(self):
+        return self.total_usd_cents_including_fees_and_taxes / 100
 
     def update_totals(self):
         """
@@ -740,7 +732,9 @@ class SalesOrder(TimeStampMixin):
             item.total_price_cents for item in line_items if item.item_type == SalesOrderLineItem.ItemType.SALES_TAX
         )
 
-        self.total_usd_cents_including_fees_and_taxes = self.calculate_total_amount()
+        self.total_usd_cents_including_fees_and_taxes = (
+            self.total_usd_cents_excluding_fees_and_taxes + self.total_fees_usd_cents + self.total_taxes_usd_cents
+        )
         self.save()
 
     def validate_order(self):
@@ -755,15 +749,14 @@ class SalesOrder(TimeStampMixin):
             raise ValidationError(f"Order {self.id} has no line items.")
 
         self.update_totals()
-        total_amount = self.calculate_total_amount()
 
-        if total_amount <= 0:
-            raise ValidationError(f"Order {self.id} has an invalid total amount: {total_amount} cents")
+        if self.total_usd_cents_including_fees_and_taxes <= 0:
+            raise ValidationError(f"Order {self.id} has an invalid total amount: {self.total_usd_cents_including_fees_and_taxes} cents")
 
         wallet = self.organisation.wallet
-        if wallet.balance_usd_cents < total_amount:
+        if wallet.balance_usd_cents < self.total_usd_cents_including_fees_and_taxes:
             raise ValidationError(
-                f"Insufficient funds for order {self.id}. Required: {total_amount} cents, Available: {wallet.balance_usd_cents} cents"
+                f"Insufficient funds for order {self.id}. Required: {self.total_usd_cents_including_fees_and_taxes} cents, Available: {wallet.balance_usd_cents} cents"
             )
 
     @transaction.atomic
@@ -779,10 +772,9 @@ class SalesOrder(TimeStampMixin):
 
         try:
             wallet = self.organisation.wallet
-            total_amount = self.calculate_total_amount()
 
             deduction_successful = OrganisationWallet.deduct_funds(
-                wallet, total_amount, f"Payment for order {self.id}"
+                wallet, self.total_usd_cents_including_fees_and_taxes, f"Payment for order {self.id}"
             )
 
             if deduction_successful:
@@ -793,7 +785,7 @@ class SalesOrder(TimeStampMixin):
 
                 OrganisationWalletTransaction.objects.create(
                     wallet=wallet,
-                    amount_cents=total_amount,
+                    amount_cents=self.total_usd_cents_including_fees_and_taxes,
                     transaction_type=OrganisationWalletTransaction.TransactionType.DEBIT,
                     description=f"Payment for order {self.id}",
                     related_order=self,
@@ -1123,3 +1115,4 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
 @receiver(post_save, sender=Cart)
 def create_or_update_sales_order(sender, instance, created, **kwargs):
     instance.update_sales_order()
+

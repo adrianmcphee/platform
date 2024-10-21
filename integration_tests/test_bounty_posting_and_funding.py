@@ -528,3 +528,4 @@ def test_bounty_checkout_view_handling(mock_process_payment, mock_update_totals,
 
 
 
+
