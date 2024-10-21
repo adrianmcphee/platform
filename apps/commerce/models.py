@@ -1015,6 +1015,13 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
     funding_type = models.CharField(max_length=10, choices=[('USD', 'USD'), ('POINTS', 'Points')], default='USD')
 
+    @property
+    def total_price_usd_cents(self):
+        if self.funding_type == 'USD':
+            return self.unit_price_usd_cents * self.quantity
+        else:  # POINTS
+            return 0  # or convert points to USD if needed
+
     def clean(self):
         super().clean()
         if self.bounty:
@@ -1037,13 +1044,6 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
                 self.unit_price_usd_cents = None
         self.full_clean()
         super().save(*args, **kwargs)
-
-    @property
-    def total_price(self):
-        if self.funding_type == 'USD':
-            return self.unit_price_usd_cents * self.quantity
-        else:  # POINTS
-            return self.unit_price_points * self.quantity
 
     def __str__(self):
         return f"{self.get_item_type_display()} for Cart {self.cart.id}"
@@ -1103,18 +1103,41 @@ class Cart(TimeStampMixin):
     def __str__(self):
         return f"Cart {self.id} - ({self.status})"
 
-    def calculate_platform_fee(self):
-        total_usd_cents = self.total_usd_cents
-        platform_fee_cents, _ = self.calculate_platform_fee_rate(total_usd_cents)
-        return platform_fee_cents
+    def calculate_platform_fee_rate(self):
+        active_config = PlatformFeeConfiguration.get_active_configuration()
+        if active_config:
+            return active_config.percentage_decimal
+        return 0  # Default to 0 if no configuration is found
 
-    def calculate_platform_fee_rate(self, total_usd_cents):
-        # Implement the platform fee calculation logic here
-        # This is a placeholder implementation, adjust as needed
-        if total_usd_cents < 10000:  # Less than $100
-            return int(total_usd_cents * 0.1), 0.1  # 10% fee
-        else:
-            return int(total_usd_cents * 0.05), 0.05  # 5% fee
+    def update_totals(self):
+        line_items = self.line_items.all()
+        
+        self.total_usd_cents_excluding_fees_and_taxes = sum(
+            item.total_price_usd_cents for item in line_items 
+            if item.item_type not in [CartLineItem.ItemType.PLATFORM_FEE, CartLineItem.ItemType.SALES_TAX]
+        )
+        
+        fee_rate = self.calculate_platform_fee_rate()
+        platform_fee = int(self.total_usd_cents_excluding_fees_and_taxes * fee_rate)
+        
+        # Create or update the platform fee line item
+        platform_fee_item, created = CartLineItem.objects.get_or_create(
+            cart=self,
+            item_type=CartLineItem.ItemType.PLATFORM_FEE,
+            defaults={'unit_price_usd_cents': platform_fee, 'quantity': 1}
+        )
+        if not created:
+            platform_fee_item.unit_price_usd_cents = platform_fee
+            platform_fee_item.save()
+
+        self.total_fees_usd_cents = platform_fee
+        self.total_taxes_usd_cents = sum(
+            item.total_price_usd_cents for item in line_items 
+            if item.item_type == CartLineItem.ItemType.SALES_TAX
+        )
+        
+        self.total_usd_cents_including_fees_and_taxes = self.calculate_total_amount()
+        self.save(updating_totals=True)
 
     def calculate_sales_tax(self):
         # Implement sales tax calculation logic here
@@ -1152,45 +1175,10 @@ class Cart(TimeStampMixin):
             related_bounty_bid=bounty_bid,
         ).delete()
 
-    @property
-    def total_amount_cents(self):
-        total = sum(
-            item.total_price_cents for item in self.items.exclude(item_type=CartLineItem.ItemType.DECREASE_ADJUSTMENT)
-        )
-        deductions = sum(
-            item.total_price_cents for item in self.items.filter(item_type=CartLineItem.ItemType.DECREASE_ADJUSTMENT)
-        )
-        return total - deductions
-
     def is_user_in_europe(self):
         european_countries = [
-            "AT",
-            "BE",
-            "BG",
-            "HR",
-            "CY",
-            "CZ",
-            "DK",
-            "EE",
-            "FI",
-            "FR",
-            "DE",
-            "GR",
-            "HU",
-            "IE",
-            "IT",
-            "LV",
-            "LT",
-            "LU",
-            "MT",
-            "NL",
-            "PL",
-            "PT",
-            "RO",
-            "SK",
-            "SI",
-            "ES",
-            "SE",
+            "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT",
+            "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE",
         ]
         return self.user_country in european_countries
 
@@ -1200,20 +1188,12 @@ class Cart(TimeStampMixin):
     def total_usd_cents(self):
         return sum(item.funding_amount for item in self.items.all() if item.bounty.reward_type == "USD")
 
-    @property
-    def total_amount_cents(self):
-        total = self.items.aggregate(total=Sum("funding_amount"))["total"] or 0
-        platform_fee = getattr(self.platform_fee_item, "amount_cents", 0) if hasattr(self, "platform_fee_item") else 0
-        sales_tax = getattr(self.sales_tax_item, "amount_cents", 0) if hasattr(self, "sales_tax_item") else 0
-        return total + platform_fee + sales_tax
-
-    @property
-    def total_amount(self):
-        return self.total_amount_cents / 100
-
-    def total_usd_cents(self):
-        total = sum(item.total_price_cents for item in self.items.all())
-        print(f"Cart {self.id} total: {total} cents")
+    def calculate_total_amount(self):
+        """
+        Calculate the total amount for the cart, including fees and taxes.
+        """
+        subtotal = self.total_usd_cents_excluding_fees_and_taxes
+        total = subtotal + self.total_fees_usd_cents + self.total_taxes_usd_cents
         return total
 
     def save(self, *args, **kwargs):
@@ -1222,15 +1202,6 @@ class Cart(TimeStampMixin):
         super().save(*args, **kwargs)
         if is_new and not updating_totals:
             self.update_totals()
-
-    def update_totals(self, skip_save=False):
-        line_items = self.line_items.all()
-        self.total_usd_cents = sum(item.unit_price_usd_cents * item.quantity for item in line_items) if line_items.exists() else 0
-        self.total_usd_cents_including_fees_and_taxes = self.total_usd_cents
-        if not skip_save:
-            self.save(updating_totals=True)
-        
-        self.update_sales_order()
 
     def update_sales_order(self):
         sales_order, created = SalesOrder.objects.get_or_create(cart=self)
@@ -1243,53 +1214,6 @@ class Cart(TimeStampMixin):
     @property
     def salesorder(self):
         return self.salesorders.first()
-
-    def calculate_total_amount(self):
-        """
-        Calculate the total amount for the cart, including fees and taxes.
-        """
-        subtotal = self.total_usd_cents_excluding_fees_and_taxes
-        total = subtotal + self.total_fees_usd_cents + self.total_taxes_usd_cents
-        return total
-
-    def update_totals(self):
-        """
-        Update the cart totals based on the associated line items.
-        """
-        line_items = self.line_items.all()
-        
-        self.total_usd_cents_excluding_fees_and_taxes = sum(
-            item.total_price_cents for item in line_items 
-            if item.item_type not in [CartLineItem.ItemType.PLATFORM_FEE, CartLineItem.ItemType.SALES_TAX]
-        )
-        
-        self.total_fees_usd_cents = sum(
-            item.total_price_cents for item in line_items 
-            if item.item_type == CartLineItem.ItemType.PLATFORM_FEE
-        )
-        
-        self.total_taxes_usd_cents = sum(
-            item.total_price_cents for item in line_items 
-            if item.item_type == CartLineItem.ItemType.SALES_TAX
-        )
-        
-        self.total_usd_cents_including_fees_and_taxes = self.calculate_total_amount()
-        self.save(updating_totals=True)
-
-    def save(self, *args, **kwargs):
-        is_new = self._state.adding
-        updating_totals = kwargs.pop('updating_totals', False)
-        super().save(*args, **kwargs)
-        if is_new and not updating_totals:
-            self.update_totals()
-
-    def update_sales_order(self):
-        sales_order, created = SalesOrder.objects.get_or_create(cart=self)
-        sales_order.total_usd_cents_excluding_fees_and_taxes = self.total_usd_cents_excluding_fees_and_taxes
-        sales_order.total_fees_usd_cents = self.total_fees_usd_cents
-        sales_order.total_taxes_usd_cents = self.total_taxes_usd_cents
-        sales_order.total_usd_cents_including_fees_and_taxes = self.total_usd_cents_including_fees_and_taxes
-        sales_order.save()
 
 
 class SalesOrder(TimeStampMixin):
