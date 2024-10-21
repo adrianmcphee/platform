@@ -150,6 +150,9 @@ class Product(TimeStampMixin, common.AttachmentAbstract):
             return 0
 
     def is_visible_to(self, person):
+        OrganisationPersonRoleAssignment = apps.get_model('security', 'OrganisationPersonRoleAssignment')
+        ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
+
         if self.visibility == self.Visibility.GLOBAL:
             return True
         if self.visibility == self.Visibility.ORG_ONLY:
@@ -163,6 +166,7 @@ class Product(TimeStampMixin, common.AttachmentAbstract):
         return False
 
     def can_manage(self, person):
+        ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
         return ProductRoleAssignment.objects.filter(
             person=person,
             product=self,
@@ -170,6 +174,7 @@ class Product(TimeStampMixin, common.AttachmentAbstract):
         ).exists()
 
     def can_admin(self, person):
+        ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
         return ProductRoleAssignment.objects.filter(
             person=person,
             product=self,
@@ -719,3 +724,4 @@ def _pre_save(sender, instance, **kwargs):
 @receiver(post_save, sender="product_management.Competition")
 def update_competition_status(sender, instance, **kwargs):
     instance.update_status()
+

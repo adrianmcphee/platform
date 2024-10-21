@@ -81,7 +81,7 @@ def product_area():
 def challenges(owned_product, user):
     return baker.make(
         "product_management.Challenge",
-        product=owned_product
+        product=owned_product,
         _quantity=10,
     )
 
