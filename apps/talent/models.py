@@ -441,3 +441,4 @@ class Feedback(models.Model):
 
     def __str__(self):
         return f"{self.recipient} - {self.provider} - {self.stars} - {self.message[:10]}..."
+

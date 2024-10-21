@@ -22,33 +22,35 @@ from .forms import AddToCartForm
 
 logger = logging.getLogger(__name__)
 
+@transaction.atomic
 @login_required
 def bounty_checkout(request):
-    logger.info("Entering bounty_checkout view")
-    person = request.user.person
-    cart = Cart.objects.filter(person=person, status=Cart.CartStatus.OPEN).first()
-    if not cart:
-        logger.warning("No open cart found for user %s", person.id)
-        return redirect('commerce:checkout_failure')
+    try:
+        cart = Cart.objects.get(person=request.user.person, status=Cart.CartStatus.OPEN)
+    except Cart.DoesNotExist:
+        messages.error(request, "No open cart found.")
+        return redirect('home')
 
     try:
-        cart.update_totals()
-        sales_order = cart.salesorder
-        logger.info("Processing payment for SalesOrder %s, total: %s", sales_order.id, sales_order.total_usd_cents_including_fees_and_taxes)
+        sales_order = SalesOrder.objects.get(cart=cart)
+    except SalesOrder.DoesNotExist:
+        messages.error(request, "No sales order found for this cart.")
+        return redirect('cart')
 
-        print(f"Before process_payment: SalesOrder status: {sales_order.status}")
-        if sales_order.process_payment():
-            print(f"After process_payment: SalesOrder status: {sales_order.status}")
-            logger.info("Payment processed successfully for SalesOrder %s", sales_order.id)
-            cart.status = Cart.CartStatus.CHECKED_OUT
-            cart.save()
-            return redirect('commerce:checkout_success')
+    if request.method == 'POST':
+        success, message = sales_order.process_payment()
+        if success:
+            messages.success(request, message)
+            return redirect('order_confirmation', order_id=sales_order.id)
         else:
-            logger.warning("Payment processing failed for SalesOrder %s", sales_order.id)
-            return redirect('commerce:checkout_failure')
-    except Exception as e:
-        logger.error("Error during checkout process: %s", str(e), exc_info=True)
-        return redirect('commerce:checkout_failure')
+            messages.error(request, message)
+            return redirect('cart')
+
+    context = {
+        'cart': cart,
+        'sales_order': sales_order,
+    }
+    return render(request, 'commerce/checkout.html', context)
 
 @login_required
 def wallet_top_up(request):
@@ -91,7 +93,7 @@ def add_to_cart(request):
                     item_type=CartLineItem.ItemType.BOUNTY,
                     quantity=1,
                     unit_price_usd_cents=bounty.reward_in_usd_cents if bounty.reward_type == 'USD' else 0,
-                    unit_price_points=bounty.reward_in_points if bounty.reward_type == 'POINTS' else None,
+                    unit_price_points=bounty.reward_in_points if bounty.reward_type == 'POINTS' else 0,  # Changed to 0 instead of None
                     bounty=bounty,
                     funding_type=bounty.reward_type
                 )

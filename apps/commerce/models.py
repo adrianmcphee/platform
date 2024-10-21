@@ -538,6 +538,547 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
         return cls.objects.create(**kwargs)
 
 
+class ContributorWallet(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    person = models.OneToOneField("talent.Person", on_delete=models.CASCADE, related_name="wallet")
+    balance_usd_in_cents = models.IntegerField(default=0)  # Balance stored as cents for precision
+
+    def __str__(self):
+        # Format the balance as dollars for readability
+        return f"Wallet for {self.person.full_name} - USD: ${self.balance_usd_in_cents / 100:.2f}"
+
+    def add_funds(self, amount_cents):
+        self.balance_usd_in_cents += amount_cents
+        self.save()
+
+    def deduct_funds(self, amount_cents):
+        if self.balance_usd_in_cents >= amount_cents:
+            self.balance_usd_in_cents -= amount_cents
+            self.save()
+            return True
+        return False
+
+
+class ContributorWalletTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        CREDIT = "Credit", "Credit"
+        DEBIT = "Debit", "Debit"
+        WITHDRAWAL = "Withdrawal", "Withdrawal"
+
+    class PaymentMethod(models.TextChoices):
+        PAYPAL = "PayPal", "PayPal"
+        USDT = "USDT", "USDT"
+        CREDIT_CARD = "CreditCard", "Credit Card"
+        CONTRIBUTOR_WALLET = "ContributorWallet", "Contributor Wallet"
+
+    class Status(models.TextChoices):
+        PENDING = "Pending", "Pending"
+        COMPLETED = "Completed", "Completed"
+        FAILED = "Failed", "Failed"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    wallet = models.ForeignKey(ContributorWallet, on_delete=models.CASCADE, related_name="transactions")
+    amount_cents = models.IntegerField()  # Amount stored as cents for precision
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)  # External transaction ID
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.person.full_name}"
+
+    def process(self):
+        if self.status != self.Status.PENDING:
+            return False
+
+        try:
+            if self.transaction_type == self.TransactionType.CREDIT:
+                self.wallet.add_funds(self.amount_cents)
+            elif self.transaction_type in [self.TransactionType.DEBIT, self.TransactionType.WITHDRAWAL]:
+                if not self.wallet.deduct_funds(self.amount_cents):
+                    raise ValueError("Insufficient funds")
+
+            self.status = self.Status.COMPLETED
+            self.save()
+            return True
+        except Exception as e:
+            self.status = self.Status.FAILED
+            self.save()
+            raise e
+
+
+class ContributorPointAccount(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    person = models.OneToOneField("talent.Person", on_delete=models.CASCADE, related_name="point_account")
+    balance_points = models.IntegerField(default=0)  # Balance stored as integer points
+
+    def __str__(self):
+        return f"Point Account for {self.person.full_name} - Points: {self.balance_points}"
+
+    def add_points(self, amount_points):
+        self.balance_points += amount_points
+        self.save()
+
+
+class ContributorPointTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        EARN = "Earn", "Earn"
+        USE = "Use", "Use"
+        TRANSFER = "Transfer", "Transfer"
+        REFUND = "Refund", "Refund"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    point_account = models.ForeignKey(ContributorPointAccount, on_delete=models.CASCADE, related_name="transactions")
+    amount_points = models.IntegerField()  # Points being transacted
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of {self.amount_points} points for {self.point_account.person.full_name}"
+
+
+class PlatformFeeConfiguration(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    percentage = models.PositiveIntegerField(default=10, validators=[MinValueValidator(1), MaxValueValidator(100)])
+    applies_from_date = models.DateTimeField()
+
+    @classmethod
+    def get_active_configuration(cls):
+        return cls.objects.filter(applies_from_date__lte=timezone.now()).order_by("-applies_from_date").first()
+
+    @property
+    def percentage_decimal(self):
+        return self.percentage / 100
+
+    def __str__(self):
+        return f"{self.percentage}% Platform Fee (from {self.applies_from_date})"
+
+    class Meta:
+        get_latest_by = "applies_from_date"
+
+
+class CartLineItem(PolymorphicModel, TimeStampMixin):
+    class ItemType(models.TextChoices):
+        BOUNTY = "BOUNTY", "Bounty"
+        PLATFORM_FEE = "PLATFORM_FEE", "Platform Fee"
+        SALES_TAX = "SALES_TAX", "Sales Tax"
+        INCREASE_ADJUSTMENT = "INCREASE_ADJUSTMENT", "Increase Adjustment"
+        DECREASE_ADJUSTMENT = "DECREASE_ADJUSTMENT", "Decrease Adjustment"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    cart = models.ForeignKey("Cart", related_name="line_items", on_delete=models.CASCADE)
+    item_type = models.CharField(max_length=25, choices=ItemType.choices)
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price_usd_cents = models.PositiveIntegerField(null=True, blank=True)
+    unit_price_points = models.PositiveIntegerField(null=True, blank=True)
+    bounty = models.ForeignKey("product_management.Bounty", on_delete=models.CASCADE, related_name='cart_items', null=True, blank=True)
+    related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
+    funding_type = models.CharField(max_length=10, choices=[('USD', 'USD'), ('POINTS', 'Points')], default='USD')
+
+    def clean(self):
+        super().clean()
+        if self.bounty:
+            if self.bounty.reward_type == 'USD' and self.unit_price_points:
+                raise ValidationError("USD bounties should not have point prices.")
+            elif self.bounty.reward_type == 'POINTS' and self.unit_price_usd_cents:
+                raise ValidationError("Point bounties should not have USD prices.")
+            
+            if self.funding_type != self.bounty.reward_type:
+                raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
+
+    def save(self, *args, **kwargs):
+        if self.bounty:
+            self.funding_type = self.bounty.reward_type
+            if self.funding_type == 'USD':
+                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
+                self.unit_price_points = None
+            else:  # POINTS
+                self.unit_price_points = self.bounty.reward_in_points
+                self.unit_price_usd_cents = None
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    @property
+    def total_price(self):
+        if self.funding_type == 'USD':
+            return self.unit_price_usd_cents * self.quantity
+        else:  # POINTS
+            return self.unit_price_points * self.quantity
+
+    def __str__(self):
+        return f"{self.get_item_type_display()} for Cart {self.cart.id}"
+
+    def clean(self):
+        if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
+            if not self.related_bounty_bid:
+                raise ValidationError("Adjustment line items must be associated with a bounty bid.")
+        elif self.related_bounty_bid:
+            raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
+        super().clean()
+        if self.bounty and self.funding_type != self.bounty.reward_type:
+            raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
+
+    def save(self, *args, **kwargs):
+        if not self.unit_price_usd_cents and hasattr(self, 'bounty') and self.bounty:
+            if hasattr(self.bounty, 'reward_in_usd_cents'):
+                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
+            elif hasattr(self.bounty, 'final_reward_in_usd_cents'):
+                self.unit_price_usd_cents = self.bounty.final_reward_in_usd_cents
+        if self.bounty and not self.funding_type:
+            self.funding_type = self.bounty.reward_type
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    class Meta:
+        unique_together = ("cart", "bounty")
+
+    @classmethod
+    def create(cls, **kwargs):
+        if kwargs.get('item_type') == cls.ItemType.PLATFORM_FEE:
+            kwargs['bounty'] = None
+        return cls.objects.create(**kwargs)
+
+
+class PointTransaction(TimeStampMixin):
+    TRANSACTION_TYPES = [("GRANT", "Grant"), ("USE", "Use"), ("REFUND", "Refund"), ("TRANSFER", "Transfer")]
+    id = Base58UUIDv5Field(primary_key=True)
+    account = models.ForeignKey(
+        OrganisationPointAccount, on_delete=models.CASCADE, related_name="org_transactions", null=True, blank=True
+    )
+    product_account = models.ForeignKey(
+        ProductPointAccount, on_delete=models.CASCADE, related_name="product_transactions", null=True, blank=True
+    )
+    amount = models.PositiveIntegerField()
+    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
+    description = models.TextField(blank=True)
+
+    def __str__(self):
+        account_name = self.account.organisation.name if self.account else self.product_account.product.name
+        return f"{self.get_transaction_type_display()} of {self.amount} points for {account_name}"
+
+    def clean(self):
+        if (self.account is None) == (self.product_account is None):
+            raise ValidationError(
+                "Transaction must be associated with either an OrganisationPointAccount or a ProductPointAccount, but not both."
+            )
+
+
+class OrganisationPointGrant(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grants")
+    amount = models.PositiveIntegerField()
+    granted_by = models.ForeignKey(
+        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="granted_points"
+    )
+    rationale = models.TextField()
+    grant_request = models.OneToOneField(
+        'OrganisationPointGrantRequest', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name="resulting_grant"
+    )
+
+    def __str__(self):
+        return f"Grant of {self.amount} points to {self.organisation.name}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.organisation.point_account.add_points(self.amount)
+        PointTransaction.objects.create(
+            account=self.organisation.point_account,
+            amount=self.amount,
+            transaction_type="GRANT",
+            description=f"Grant: {self.rationale}",
+        )
+
+
+class OrganisationPointGrantRequest(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grant_requests")
+    amount_points = models.PositiveIntegerField()
+    requested_by = models.ForeignKey(
+        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="point_grant_requests"
+    )
+    rationale = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=[("Pending", "Pending"), ("Approved", "Approved"), ("Rejected", "Rejected")],
+        default="Pending",
+    )
+
+    def approve(self):
+        if self.status == "Pending":
+            self.status = "Approved"
+            self.save()
+            
+            # Create the OrganisationPointGrant
+            grant = OrganisationPointGrant.objects.create(
+                organisation=self.organisation,
+                amount=self.amount_points,
+                granted_by=self.requested_by,
+                rationale=self.rationale,
+                grant_request=self
+            )
+            
+            # The point addition and transaction creation are now handled in the OrganisationPointGrant.save() method
+
+    def reject(self):
+        if self.status == "Pending":
+            self.status = "Rejected"
+            self.save()
+
+
+class ProductPointRequest(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    product = models.ForeignKey("product_management.Product", on_delete=models.CASCADE, related_name="point_requests")
+    amount_points = models.PositiveIntegerField()
+    requested_by = models.ForeignKey(
+        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="product_point_requests"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=[("Pending", "Pending"), ("Approved", "Approved"), ("Rejected", "Rejected")],
+        default="Pending",
+    )
+    resulting_transaction = models.OneToOneField(
+        PointTransaction, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name="product_point_request"
+    )
+
+    def approve(self):
+        if self.status == "Pending":
+            self.status = "Approved"
+            self.save()
+            
+            # Add points to the product's point account
+            product_account, created = ProductPointAccount.objects.get_or_create(product=self.product)
+            product_account.add_points(self.amount_points)
+            
+            # Create the PointTransaction
+            transaction = PointTransaction.objects.create(
+                product_account=product_account,
+                amount=self.amount_points,
+                transaction_type="TRANSFER",
+                description=f"Transfer to product: {self.product.name}",
+            )
+            
+            # Link the transaction to this request
+            self.resulting_transaction = transaction
+            self.save()
+
+    def reject(self):
+        if self.status == "Pending":
+            self.status = "Rejected"
+            self.save()
+
+
+class ContributorWallet(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    person = models.OneToOneField("talent.Person", on_delete=models.CASCADE, related_name="wallet")
+    balance_usd_in_cents = models.IntegerField(default=0)  # Balance stored as cents for precision
+
+    def __str__(self):
+        # Format the balance as dollars for readability
+        return f"Wallet for {self.person.full_name} - USD: ${self.balance_usd_in_cents / 100:.2f}"
+
+    def add_funds(self, amount_cents):
+        self.balance_usd_in_cents += amount_cents
+        self.save()
+
+    def deduct_funds(self, amount_cents):
+        if self.balance_usd_in_cents >= amount_cents:
+            self.balance_usd_in_cents -= amount_cents
+            self.save()
+            return True
+        return False
+
+
+class ContributorWalletTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        CREDIT = "Credit", "Credit"
+        DEBIT = "Debit", "Debit"
+        WITHDRAWAL = "Withdrawal", "Withdrawal"
+
+    class PaymentMethod(models.TextChoices):
+        PAYPAL = "PayPal", "PayPal"
+        USDT = "USDT", "USDT"
+        CREDIT_CARD = "CreditCard", "Credit Card"
+        CONTRIBUTOR_WALLET = "ContributorWallet", "Contributor Wallet"
+
+    class Status(models.TextChoices):
+        PENDING = "Pending", "Pending"
+        COMPLETED = "Completed", "Completed"
+        FAILED = "Failed", "Failed"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    wallet = models.ForeignKey(ContributorWallet, on_delete=models.CASCADE, related_name="transactions")
+    amount_cents = models.IntegerField()  # Amount stored as cents for precision
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)  # External transaction ID
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.person.full_name}"
+
+    def process(self):
+        if self.status != self.Status.PENDING:
+            return False
+
+        try:
+            if self.transaction_type == self.TransactionType.CREDIT:
+                self.wallet.add_funds(self.amount_cents)
+            elif self.transaction_type in [self.TransactionType.DEBIT, self.TransactionType.WITHDRAWAL]:
+                if not self.wallet.deduct_funds(self.amount_cents):
+                    raise ValueError("Insufficient funds")
+
+            self.status = self.Status.COMPLETED
+            self.save()
+            return True
+        except Exception as e:
+            self.status = self.Status.FAILED
+            self.save()
+            raise e
+
+
+class ContributorPointAccount(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    person = models.OneToOneField("talent.Person", on_delete=models.CASCADE, related_name="point_account")
+    balance_points = models.IntegerField(default=0)  # Balance stored as integer points
+
+    def __str__(self):
+        return f"Point Account for {self.person.full_name} - Points: {self.balance_points}"
+
+    def add_points(self, amount_points):
+        self.balance_points += amount_points
+        self.save()
+
+
+class ContributorPointTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        EARN = "Earn", "Earn"
+        USE = "Use", "Use"
+        TRANSFER = "Transfer", "Transfer"
+        REFUND = "Refund", "Refund"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    point_account = models.ForeignKey(ContributorPointAccount, on_delete=models.CASCADE, related_name="transactions")
+    amount_points = models.IntegerField()  # Points being transacted
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of {self.amount_points} points for {self.point_account.person.full_name}"
+
+
+class PlatformFeeConfiguration(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    percentage = models.PositiveIntegerField(default=10, validators=[MinValueValidator(1), MaxValueValidator(100)])
+    applies_from_date = models.DateTimeField()
+
+    @classmethod
+    def get_active_configuration(cls):
+        return cls.objects.filter(applies_from_date__lte=timezone.now()).order_by("-applies_from_date").first()
+
+    @property
+    def percentage_decimal(self):
+        return self.percentage / 100
+
+    def __str__(self):
+        return f"{self.percentage}% Platform Fee (from {self.applies_from_date})"
+
+    class Meta:
+        get_latest_by = "applies_from_date"
+
+
+class CartLineItem(PolymorphicModel, TimeStampMixin):
+    class ItemType(models.TextChoices):
+        BOUNTY = "BOUNTY", "Bounty"
+        PLATFORM_FEE = "PLATFORM_FEE", "Platform Fee"
+        SALES_TAX = "SALES_TAX", "Sales Tax"
+        INCREASE_ADJUSTMENT = "INCREASE_ADJUSTMENT", "Increase Adjustment"
+        DECREASE_ADJUSTMENT = "DECREASE_ADJUSTMENT", "Decrease Adjustment"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    cart = models.ForeignKey("Cart", related_name="line_items", on_delete=models.CASCADE)
+    item_type = models.CharField(max_length=25, choices=ItemType.choices)
+    quantity = models.PositiveIntegerField(default=1)
+    unit_price_usd_cents = models.PositiveIntegerField(null=True, blank=True)
+    unit_price_points = models.PositiveIntegerField(null=True, blank=True)
+    bounty = models.ForeignKey("product_management.Bounty", on_delete=models.CASCADE, related_name='cart_items', null=True, blank=True)
+    related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
+    funding_type = models.CharField(max_length=10, choices=[('USD', 'USD'), ('POINTS', 'Points')], default='USD')
+
+    def clean(self):
+        super().clean()
+        if self.bounty:
+            if self.bounty.reward_type == 'USD' and self.unit_price_points:
+                raise ValidationError("USD bounties should not have point prices.")
+            elif self.bounty.reward_type == 'POINTS' and self.unit_price_usd_cents:
+                raise ValidationError("Point bounties should not have USD prices.")
+            
+            if self.funding_type != self.bounty.reward_type:
+                raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
+
+    def save(self, *args, **kwargs):
+        if self.bounty:
+            self.funding_type = self.bounty.reward_type
+            if self.funding_type == 'USD':
+                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
+                self.unit_price_points = None
+            else:  # POINTS
+                self.unit_price_points = self.bounty.reward_in_points
+                self.unit_price_usd_cents = None
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    @property
+    def total_price(self):
+        if self.funding_type == 'USD':
+            return self.unit_price_usd_cents * self.quantity
+        else:  # POINTS
+            return self.unit_price_points * self.quantity
+
+    def __str__(self):
+        return f"{self.get_item_type_display()} for Cart {self.cart.id}"
+
+    def clean(self):
+        if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
+            if not self.related_bounty_bid:
+                raise ValidationError("Adjustment line items must be associated with a bounty bid.")
+        elif self.related_bounty_bid:
+            raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
+        super().clean()
+        if self.bounty and self.funding_type != self.bounty.reward_type:
+            raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
+
+    def save(self, *args, **kwargs):
+        if not self.unit_price_usd_cents and hasattr(self, 'bounty') and self.bounty:
+            if hasattr(self.bounty, 'reward_in_usd_cents'):
+                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
+            elif hasattr(self.bounty, 'final_reward_in_usd_cents'):
+                self.unit_price_usd_cents = self.bounty.final_reward_in_usd_cents
+        if self.bounty and not self.funding_type:
+            self.funding_type = self.bounty.reward_type
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    class Meta:
+        unique_together = ("cart", "bounty")
+
+    @classmethod
+    def create(cls, **kwargs):
+        if kwargs.get('item_type') == cls.ItemType.PLATFORM_FEE:
+            kwargs['bounty'] = None
+        return cls.objects.create(**kwargs)
+
+
 class Cart(TimeStampMixin):
     class CartStatus(models.TextChoices):
         OPEN = "OPEN", _("Open")
@@ -693,13 +1234,62 @@ class Cart(TimeStampMixin):
 
     def update_sales_order(self):
         sales_order, created = SalesOrder.objects.get_or_create(cart=self)
-        sales_order.total_usd_cents = self.total_usd_cents
+        sales_order.total_usd_cents_excluding_fees_and_taxes = self.total_usd_cents_excluding_fees_and_taxes
+        sales_order.total_fees_usd_cents = self.total_fees_usd_cents
+        sales_order.total_taxes_usd_cents = self.total_taxes_usd_cents
         sales_order.total_usd_cents_including_fees_and_taxes = self.total_usd_cents_including_fees_and_taxes
         sales_order.save()
 
     @property
     def salesorder(self):
         return self.salesorders.first()
+
+    def calculate_total_amount(self):
+        """
+        Calculate the total amount for the cart, including fees and taxes.
+        """
+        subtotal = self.total_usd_cents_excluding_fees_and_taxes
+        total = subtotal + self.total_fees_usd_cents + self.total_taxes_usd_cents
+        return total
+
+    def update_totals(self):
+        """
+        Update the cart totals based on the associated line items.
+        """
+        line_items = self.line_items.all()
+        
+        self.total_usd_cents_excluding_fees_and_taxes = sum(
+            item.total_price_cents for item in line_items 
+            if item.item_type not in [CartLineItem.ItemType.PLATFORM_FEE, CartLineItem.ItemType.SALES_TAX]
+        )
+        
+        self.total_fees_usd_cents = sum(
+            item.total_price_cents for item in line_items 
+            if item.item_type == CartLineItem.ItemType.PLATFORM_FEE
+        )
+        
+        self.total_taxes_usd_cents = sum(
+            item.total_price_cents for item in line_items 
+            if item.item_type == CartLineItem.ItemType.SALES_TAX
+        )
+        
+        self.total_usd_cents_including_fees_and_taxes = self.calculate_total_amount()
+        self.save(updating_totals=True)
+
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        updating_totals = kwargs.pop('updating_totals', False)
+        super().save(*args, **kwargs)
+        if is_new and not updating_totals:
+            self.update_totals()
+
+    def update_sales_order(self):
+        sales_order, created = SalesOrder.objects.get_or_create(cart=self)
+        sales_order.total_usd_cents_excluding_fees_and_taxes = self.total_usd_cents_excluding_fees_and_taxes
+        sales_order.total_fees_usd_cents = self.total_fees_usd_cents
+        sales_order.total_taxes_usd_cents = self.total_taxes_usd_cents
+        sales_order.total_usd_cents_including_fees_and_taxes = self.total_usd_cents_including_fees_and_taxes
+        sales_order.save()
 
 
 class SalesOrder(TimeStampMixin):
@@ -711,7 +1301,7 @@ class SalesOrder(TimeStampMixin):
         REFUNDED = "Refunded", "Refunded"
 
     id = Base58UUIDv5Field(primary_key=True)
-    cart = models.OneToOneField(Cart, on_delete=models.CASCADE, related_name='salesorder')
+    cart = models.OneToOneField('Cart', on_delete=models.CASCADE, related_name='salesorder')
     organisation = models.ForeignKey('Organisation', on_delete=models.CASCADE)
     total_usd_cents_excluding_fees_and_taxes = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=20, choices=OrderStatus.choices, default=OrderStatus.PENDING)
@@ -723,112 +1313,113 @@ class SalesOrder(TimeStampMixin):
     def __str__(self):
         return f"Sales Order {self.id} for Cart {self.cart.id}"
 
-    def save(self, *args, **kwargs):
-        if not self._state.adding and not getattr(self, '_updating_totals', False):
-            self._updating_totals = True
-            self.update_totals()
-            self._updating_totals = False
-        super().save(*args, **kwargs)
-
-    def create_line_items(self):
-        for cart_item in self.cart.items.filter(funding_type="USD"):
-            SalesOrderLineItem.objects.create(
-                sales_order=self,
-                item_type=SalesOrderLineItem.ItemType.BOUNTY,
-                bounty=cart_item.bounty,
-                quantity=1,
-                unit_price_usd_cents=cart_item.unit_price_usd_cents,
-            )
-
-        platform_fee = getattr(self.cart, "platform_fee_item", None)
-        if platform_fee:
-            SalesOrderLineItem.objects.create(
-                sales_order=self,
-                item_type=SalesOrderLineItem.ItemType.PLATFORM_FEE,
-                quantity=1,
-                unit_price_usd_cents=platform_fee.amount_cents,
-                fee_rate=platform_fee.fee_rate,
-            )
-
-        sales_tax = getattr(self.cart, "sales_tax_item", None)
-        if sales_tax:
-            SalesOrderLineItem.objects.create(
-                sales_order=self,
-                item_type=SalesOrderLineItem.ItemType.SALES_TAX,
-                quantity=1,
-                unit_price_usd_cents=sales_tax.amount_cents,
-                tax_rate=sales_tax.tax_rate,
-            )
+    def calculate_total_amount(self):
+        """
+        Calculate the total amount for the order, including fees and taxes.
+        """
+        subtotal = self.total_usd_cents_excluding_fees_and_taxes
+        total = subtotal + self.total_fees_usd_cents + self.total_taxes_usd_cents
+        return total
 
     def update_totals(self):
-        self.total_usd_cents_excluding_fees_and_taxes = sum(
-            item.unit_price_usd_cents * item.quantity
-            for item in self.line_items.exclude(
-                item_type__in=[
-                    SalesOrderLineItem.ItemType.PLATFORM_FEE,
-                    SalesOrderLineItem.ItemType.SALES_TAX,
-                    SalesOrderLineItem.ItemType.DECREASE_ADJUSTMENT
-                ]
-            )
-        )
-        self.total_usd_cents_including_fees_and_taxes = sum(
-            item.unit_price_usd_cents * item.quantity
-            for item in self.line_items.all()
-        )
-        self.save()
-
-    def recalculate_totals(self):
-        cart_items = self.cart.items.all()
-        bounty_total = sum(item.unit_price_usd_cents for item in cart_items if item.item_type == CartLineItem.ItemType.BOUNTY)
-        platform_fee = sum(item.unit_price_usd_cents for item in cart_items if item.item_type == CartLineItem.ItemType.PLATFORM_FEE)
+        """
+        Update the order totals based on the associated line items.
+        """
+        line_items = self.line_items.all()
         
-        self.total_usd_cents_excluding_fees_and_taxes = bounty_total
-        self.total_usd_cents_including_fees_and_taxes = bounty_total + platform_fee
+        self.total_usd_cents_excluding_fees_and_taxes = sum(
+            item.total_price_cents for item in line_items 
+            if item.item_type not in [SalesOrderLineItem.ItemType.PLATFORM_FEE, SalesOrderLineItem.ItemType.SALES_TAX]
+        )
+        
+        self.total_fees_usd_cents = sum(
+            item.total_price_cents for item in line_items 
+            if item.item_type == SalesOrderLineItem.ItemType.PLATFORM_FEE
+        )
+        
+        self.total_taxes_usd_cents = sum(
+            item.total_price_cents for item in line_items 
+            if item.item_type == SalesOrderLineItem.ItemType.SALES_TAX
+        )
+        
+        self.total_usd_cents_including_fees_and_taxes = self.calculate_total_amount()
         self.save()
 
+    def validate_order(self):
+        """
+        Validate the order before processing payment.
+        Raises ValidationError if the order is invalid.
+        """
+        if self.status != self.OrderStatus.PENDING:
+            raise ValidationError(f"Cannot process payment for order {self.id}. Current status: {self.status}")
+
+        if not self.line_items.exists():
+            raise ValidationError(f"Order {self.id} has no line items.")
+
+        self.update_totals()
+        total_amount = self.calculate_total_amount()
+
+        if total_amount <= 0:
+            raise ValidationError(f"Order {self.id} has an invalid total amount: {total_amount} cents")
+
+        wallet = self.organisation.wallet
+        if wallet.balance_usd_cents < total_amount:
+            raise ValidationError(f"Insufficient funds for order {self.id}. Required: {total_amount} cents, Available: {wallet.balance_usd_cents} cents")
+
+    @transaction.atomic
     def process_payment(self):
         try:
-            wallet = self.cart.organisation.wallet
-            print(f"Processing payment for SalesOrder {self.id}")
-            print(f"Wallet balance before deduction: {wallet.balance_usd_cents}")
-            print(f"Attempting to deduct {self.total_usd_cents_including_fees_and_taxes} cents")
-            
+            self.validate_order()
+        except ValidationError as e:
+            error_msg = str(e)
+            logger.error(error_msg)
+            self.status = self.OrderStatus.PAYMENT_FAILED
+            self.save()
+            return False, error_msg
+
+        try:
+            wallet = self.organisation.wallet
+            total_amount = self.calculate_total_amount()
+
             deduction_successful = OrganisationWallet.deduct_funds(
                 wallet,
-                self.total_usd_cents_including_fees_and_taxes, 
+                total_amount,
                 f"Payment for order {self.id}"
             )
-            
-            print(f"Deduction successful: {deduction_successful}")
-            
+
             if deduction_successful:
-                print(f"Funds deducted successfully")
                 self.status = self.OrderStatus.COMPLETED
                 self.save()
-                print(f"SalesOrder status updated to {self.status}")
-                # Create a transaction
-                transaction = OrganisationWalletTransaction.objects.create(
+                self.cart.status = 'CHECKED_OUT'
+                self.cart.save()
+
+                OrganisationWalletTransaction.objects.create(
                     wallet=wallet,
-                    amount_cents=self.total_usd_cents_including_fees_and_taxes,
+                    amount_cents=total_amount,
                     transaction_type=OrganisationWalletTransaction.TransactionType.DEBIT,
                     description=f"Payment for order {self.id}",
                     related_order=self
                 )
-                print(f"Transaction created: {transaction}")
-                return True
-            print(f"Failed to deduct funds")
-            return False
+
+                self._activate_purchases()
+                success_msg = f"Payment processed successfully for order {self.id}"
+                logger.info(success_msg)
+                return True, success_msg
+            else:
+                error_msg = f"Failed to deduct funds for order {self.id}. Please try again or contact support."
+                logger.error(error_msg)
+                self.status = self.OrderStatus.PAYMENT_FAILED
+                self.save()
+                return False, error_msg
+
         except Exception as e:
-            print(f"Error processing payment: {str(e)}")
-            logger.error(f"Error processing payment for order {self.id}: {str(e)}")
-            return False
+            error_msg = f"Error processing payment for order {self.id}: {str(e)}"
+            logger.exception(error_msg)
+            self.status = self.OrderStatus.PAYMENT_FAILED
+            self.save()
+            return False, error_msg
 
-    def _process_usd_payment(self):
-        # Implement USD payment processing logic here
-        # Return True if successful, False otherwise
-        return True  # Placeholder implementation
-
-    def _provision_bounties(self):
+    def _activate_purchases(self):
         for item in self.line_items.filter(item_type=SalesOrderLineItem.ItemType.BOUNTY):
             bounty = item.bounty
             Bounty = apps.get_model("product_management", "Bounty")
@@ -851,10 +1442,6 @@ class SalesOrder(TimeStampMixin):
             competition.status = Competition.CompetitionStatus.ACTIVE
             competition.save()
         # TODO: Add additional activation logic (e.g., setting start date, notifications)
-
-    @property
-    def person(self):
-        return self.cart.person
 
     def save(self, *args, **kwargs):
         if not self.organisation_id and self.cart:
@@ -1137,6 +1724,9 @@ class ContributorUSDTWithdrawalStrategy(ContributorWithdrawalStrategy):
 @receiver(post_save, sender=Cart)
 def create_or_update_sales_order(sender, instance, created, **kwargs):
     instance.update_sales_order()
+
+
+
 
 
 

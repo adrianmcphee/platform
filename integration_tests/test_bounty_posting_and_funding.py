@@ -36,10 +36,16 @@ def wallet(db, organisation):
 
 @pytest.fixture
 def bounty(db, product):
+    challenge = Challenge.objects.create(
+        title="Test Challenge",
+        description="This is a test challenge",
+        product=product
+    )
     return Bounty.objects.create(
         title="Test Bounty",
         description="This is a test bounty",
         product=product,
+        challenge=challenge,  # Associate with the challenge
         status=Bounty.BountyStatus.OPEN,
         reward_type='USD',
         reward_in_usd_cents=10000  # $100.00
@@ -457,6 +463,9 @@ def test_mixed_currency_bounty_handling(client, person, organisation, wallet, pr
 @patch('apps.commerce.models.Cart.update_totals')
 @patch('apps.commerce.models.SalesOrder.process_payment')
 def test_bounty_checkout_view_handling(mock_process_payment, mock_update_totals, client, person, organisation, wallet, product):
+    def side_effect():
+        return True
+
     mock_process_payment.return_value = True
     mock_update_totals.return_value = None
 
@@ -484,6 +493,8 @@ def test_bounty_checkout_view_handling(mock_process_payment, mock_update_totals,
 
     sales_order = SalesOrder.objects.get(cart=cart)
     assert sales_order.status == SalesOrder.OrderStatus.COMPLETED
+
+
 
 
 

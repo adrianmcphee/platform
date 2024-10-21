@@ -473,8 +473,10 @@ class Bounty(TimeStampMixin, common.AttachmentAbstract):
             raise ValidationError("For USD rewards, final_reward_in_points should be None")
         if self.reward_type == 'Points' and self.final_reward_in_usd_cents is not None:
             raise ValidationError("For Points rewards, final_reward_in_usd_cents should be None")
-        if self.is_part_of_challenge and self.is_part_of_competition:
-            raise ValidationError("A Bounty cannot be part of both a Challenge and a Competition.")
+        if self.challenge is None and self.competition is None:
+            raise ValidationError("Bounty must be associated with either a Challenge or a Competition.")
+        if self.challenge is not None and self.competition is not None:
+            raise ValidationError("Bounty cannot be associated with both a Challenge and a Competition.")
 
     @property
     def has_claimed(self):
@@ -724,4 +726,5 @@ def _pre_save(sender, instance, **kwargs):
 @receiver(post_save, sender="product_management.Competition")
 def update_competition_status(sender, instance, **kwargs):
     instance.update_status()
+
 
