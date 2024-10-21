@@ -473,6 +473,13 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
     funding_type = models.CharField(max_length=10, choices=[("USD", "USD"), ("POINTS", "Points")], default="USD")
 
+    @property
+    def total_price_usd_cents(self):
+        if self.funding_type == "USD":
+            return self.unit_price_usd_cents * self.quantity
+        else:  # POINTS
+            return 0  # or convert points to USD if needed
+
     def clean(self):
         super().clean()
         if self.bounty:
@@ -484,6 +491,12 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
             if self.funding_type != self.bounty.reward_type:
                 raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
 
+        if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
+            if not self.related_bounty_bid:
+                raise ValidationError("Adjustment line items must be associated with a bounty bid.")
+        elif self.related_bounty_bid:
+            raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
+
     def save(self, *args, **kwargs):
         if self.bounty:
             self.funding_type = self.bounty.reward_type
@@ -493,39 +506,16 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
             else:  # POINTS
                 self.unit_price_points = self.bounty.reward_in_points
                 self.unit_price_usd_cents = None
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    @property
-    def total_price(self):
-        if self.funding_type == "USD":
-            return self.unit_price_usd_cents * self.quantity
-        else:  # POINTS
-            return self.unit_price_points * self.quantity
-
-    def __str__(self):
-        return f"{self.get_item_type_display()} for Cart {self.cart.id}"
-
-    def clean(self):
-        if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
-            if not self.related_bounty_bid:
-                raise ValidationError("Adjustment line items must be associated with a bounty bid.")
-        elif self.related_bounty_bid:
-            raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
-        super().clean()
-        if self.bounty and self.funding_type != self.bounty.reward_type:
-            raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
-
-    def save(self, *args, **kwargs):
         if not self.unit_price_usd_cents and hasattr(self, "bounty") and self.bounty:
             if hasattr(self.bounty, "reward_in_usd_cents"):
                 self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
             elif hasattr(self.bounty, "final_reward_in_usd_cents"):
                 self.unit_price_usd_cents = self.bounty.final_reward_in_usd_cents
-        if self.bounty and not self.funding_type:
-            self.funding_type = self.bounty.reward_type
         self.full_clean()
         super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.get_item_type_display()} for Cart {self.cart.id}"
 
     class Meta:
         unique_together = ("cart", "bounty")
@@ -535,106 +525,6 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
         if kwargs.get("item_type") == cls.ItemType.PLATFORM_FEE:
             kwargs["bounty"] = None
         return cls.objects.create(**kwargs)
-
-
-class ContributorWallet(TimeStampMixin):
-    id = Base58UUIDv5Field(primary_key=True)
-    person = models.OneToOneField("talent.Person", on_delete=models.CASCADE, related_name="wallet")
-    balance_usd_in_cents = models.IntegerField(default=0)  # Balance stored as cents for precision
-
-    def __str__(self):
-        # Format the balance as dollars for readability
-        return f"Wallet for {self.person.full_name} - USD: ${self.balance_usd_in_cents / 100:.2f}"
-
-    def add_funds(self, amount_cents):
-        self.balance_usd_in_cents += amount_cents
-        self.save()
-
-    def deduct_funds(self, amount_cents):
-        if self.balance_usd_in_cents >= amount_cents:
-            self.balance_usd_in_cents -= amount_cents
-            self.save()
-            return True
-        return False
-
-
-class ContributorWalletTransaction(TimeStampMixin):
-    class TransactionType(models.TextChoices):
-        CREDIT = "Credit", "Credit"
-        DEBIT = "Debit", "Debit"
-        WITHDRAWAL = "Withdrawal", "Withdrawal"
-
-    class PaymentMethod(models.TextChoices):
-        PAYPAL = "PayPal", "PayPal"
-        USDT = "USDT", "USDT"
-        CREDIT_CARD = "CreditCard", "Credit Card"
-        CONTRIBUTOR_WALLET = "ContributorWallet", "Contributor Wallet"
-
-    class Status(models.TextChoices):
-        PENDING = "Pending", "Pending"
-        COMPLETED = "Completed", "Completed"
-        FAILED = "Failed", "Failed"
-
-    id = Base58UUIDv5Field(primary_key=True)
-    wallet = models.ForeignKey(ContributorWallet, on_delete=models.CASCADE, related_name="transactions")
-    amount_cents = models.IntegerField()  # Amount stored as cents for precision
-    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
-    description = models.TextField()
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
-    transaction_id = models.CharField(max_length=255, null=True, blank=True)  # External transaction ID
-
-    def __str__(self):
-        return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.person.full_name}"
-
-    def process(self):
-        if self.status != self.Status.PENDING:
-            return False
-
-        try:
-            if self.transaction_type == self.TransactionType.CREDIT:
-                self.wallet.add_funds(self.amount_cents)
-            elif self.transaction_type in [self.TransactionType.DEBIT, self.TransactionType.WITHDRAWAL]:
-                if not self.wallet.deduct_funds(self.amount_cents):
-                    raise ValueError("Insufficient funds")
-
-            self.status = self.Status.COMPLETED
-            self.save()
-            return True
-        except Exception as e:
-            self.status = self.Status.FAILED
-            self.save()
-            raise e
-
-
-class ContributorPointAccount(TimeStampMixin):
-    id = Base58UUIDv5Field(primary_key=True)
-    person = models.OneToOneField("talent.Person", on_delete=models.CASCADE, related_name="point_account")
-    balance_points = models.IntegerField(default=0)  # Balance stored as integer points
-
-    def __str__(self):
-        return f"Point Account for {self.person.full_name} - Points: {self.balance_points}"
-
-    def add_points(self, amount_points):
-        self.balance_points += amount_points
-        self.save()
-
-
-class ContributorPointTransaction(TimeStampMixin):
-    class TransactionType(models.TextChoices):
-        EARN = "Earn", "Earn"
-        USE = "Use", "Use"
-        TRANSFER = "Transfer", "Transfer"
-        REFUND = "Refund", "Refund"
-
-    id = Base58UUIDv5Field(primary_key=True)
-    point_account = models.ForeignKey(ContributorPointAccount, on_delete=models.CASCADE, related_name="transactions")
-    amount_points = models.IntegerField()  # Points being transacted
-    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
-    description = models.TextField(blank=True)
-
-    def __str__(self):
-        return f"{self.get_transaction_type_display()} of {self.amount_points} points for {self.point_account.person.full_name}"
 
 
 class PlatformFeeConfiguration(TimeStampMixin):
@@ -677,6 +567,13 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
     funding_type = models.CharField(max_length=10, choices=[("USD", "USD"), ("POINTS", "Points")], default="USD")
 
+    @property
+    def total_price_usd_cents(self):
+        if self.funding_type == "USD":
+            return self.unit_price_usd_cents * self.quantity
+        else:  # POINTS
+            return 0  # or convert points to USD if needed
+
     def clean(self):
         super().clean()
         if self.bounty:
@@ -688,6 +585,12 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
             if self.funding_type != self.bounty.reward_type:
                 raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
 
+        if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
+            if not self.related_bounty_bid:
+                raise ValidationError("Adjustment line items must be associated with a bounty bid.")
+        elif self.related_bounty_bid:
+            raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
+
     def save(self, *args, **kwargs):
         if self.bounty:
             self.funding_type = self.bounty.reward_type
@@ -697,39 +600,16 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
             else:  # POINTS
                 self.unit_price_points = self.bounty.reward_in_points
                 self.unit_price_usd_cents = None
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    @property
-    def total_price(self):
-        if self.funding_type == "USD":
-            return self.unit_price_usd_cents * self.quantity
-        else:  # POINTS
-            return self.unit_price_points * self.quantity
-
-    def __str__(self):
-        return f"{self.get_item_type_display()} for Cart {self.cart.id}"
-
-    def clean(self):
-        if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
-            if not self.related_bounty_bid:
-                raise ValidationError("Adjustment line items must be associated with a bounty bid.")
-        elif self.related_bounty_bid:
-            raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
-        super().clean()
-        if self.bounty and self.funding_type != self.bounty.reward_type:
-            raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
-
-    def save(self, *args, **kwargs):
         if not self.unit_price_usd_cents and hasattr(self, "bounty") and self.bounty:
             if hasattr(self.bounty, "reward_in_usd_cents"):
                 self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
             elif hasattr(self.bounty, "final_reward_in_usd_cents"):
                 self.unit_price_usd_cents = self.bounty.final_reward_in_usd_cents
-        if self.bounty and not self.funding_type:
-            self.funding_type = self.bounty.reward_type
         self.full_clean()
         super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.get_item_type_display()} for Cart {self.cart.id}"
 
     class Meta:
         unique_together = ("cart", "bounty")
@@ -972,110 +852,6 @@ class ContributorPointTransaction(TimeStampMixin):
 
     def __str__(self):
         return f"{self.get_transaction_type_display()} of {self.amount_points} points for {self.point_account.person.full_name}"
-
-
-class PlatformFeeConfiguration(TimeStampMixin):
-    id = Base58UUIDv5Field(primary_key=True)
-    percentage = models.PositiveIntegerField(default=10, validators=[MinValueValidator(1), MaxValueValidator(100)])
-    applies_from_date = models.DateTimeField()
-
-    @classmethod
-    def get_active_configuration(cls):
-        return cls.objects.filter(applies_from_date__lte=timezone.now()).order_by("-applies_from_date").first()
-
-    @property
-    def percentage_decimal(self):
-        return self.percentage / 100
-
-    def __str__(self):
-        return f"{self.percentage}% Platform Fee (from {self.applies_from_date})"
-
-    class Meta:
-        get_latest_by = "applies_from_date"
-
-
-class CartLineItem(PolymorphicModel, TimeStampMixin):
-    class ItemType(models.TextChoices):
-        BOUNTY = "BOUNTY", "Bounty"
-        PLATFORM_FEE = "PLATFORM_FEE", "Platform Fee"
-        SALES_TAX = "SALES_TAX", "Sales Tax"
-        INCREASE_ADJUSTMENT = "INCREASE_ADJUSTMENT", "Increase Adjustment"
-        DECREASE_ADJUSTMENT = "DECREASE_ADJUSTMENT", "Decrease Adjustment"
-
-    id = Base58UUIDv5Field(primary_key=True)
-    cart = models.ForeignKey("Cart", related_name="line_items", on_delete=models.CASCADE)
-    item_type = models.CharField(max_length=25, choices=ItemType.choices)
-    quantity = models.PositiveIntegerField(default=1)
-    unit_price_usd_cents = models.PositiveIntegerField(null=True, blank=True)
-    unit_price_points = models.PositiveIntegerField(null=True, blank=True)
-    bounty = models.ForeignKey(
-        "product_management.Bounty", on_delete=models.CASCADE, related_name="cart_items", null=True, blank=True
-    )
-    related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
-    funding_type = models.CharField(max_length=10, choices=[("USD", "USD"), ("POINTS", "Points")], default="USD")
-
-    @property
-    def total_price_usd_cents(self):
-        if self.funding_type == "USD":
-            return self.unit_price_usd_cents * self.quantity
-        else:  # POINTS
-            return 0  # or convert points to USD if needed
-
-    def clean(self):
-        super().clean()
-        if self.bounty:
-            if self.bounty.reward_type == "USD" and self.unit_price_points:
-                raise ValidationError("USD bounties should not have point prices.")
-            elif self.bounty.reward_type == "POINTS" and self.unit_price_usd_cents:
-                raise ValidationError("Point bounties should not have USD prices.")
-
-            if self.funding_type != self.bounty.reward_type:
-                raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
-
-    def save(self, *args, **kwargs):
-        if self.bounty:
-            self.funding_type = self.bounty.reward_type
-            if self.funding_type == "USD":
-                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
-                self.unit_price_points = None
-            else:  # POINTS
-                self.unit_price_points = self.bounty.reward_in_points
-                self.unit_price_usd_cents = None
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    def __str__(self):
-        return f"{self.get_item_type_display()} for Cart {self.cart.id}"
-
-    def clean(self):
-        if self.item_type in [self.ItemType.INCREASE_ADJUSTMENT, self.ItemType.DECREASE_ADJUSTMENT]:
-            if not self.related_bounty_bid:
-                raise ValidationError("Adjustment line items must be associated with a bounty bid.")
-        elif self.related_bounty_bid:
-            raise ValidationError("Only adjustment line items can be associated with a bounty bid.")
-        super().clean()
-        if self.bounty and self.funding_type != self.bounty.reward_type:
-            raise ValidationError(f"Funding type must match the bounty's reward type: {self.bounty.reward_type}")
-
-    def save(self, *args, **kwargs):
-        if not self.unit_price_usd_cents and hasattr(self, "bounty") and self.bounty:
-            if hasattr(self.bounty, "reward_in_usd_cents"):
-                self.unit_price_usd_cents = self.bounty.reward_in_usd_cents
-            elif hasattr(self.bounty, "final_reward_in_usd_cents"):
-                self.unit_price_usd_cents = self.bounty.final_reward_in_usd_cents
-        if self.bounty and not self.funding_type:
-            self.funding_type = self.bounty.reward_type
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-    class Meta:
-        unique_together = ("cart", "bounty")
-
-    @classmethod
-    def create(cls, **kwargs):
-        if kwargs.get("item_type") == cls.ItemType.PLATFORM_FEE:
-            kwargs["bounty"] = None
-        return cls.objects.create(**kwargs)
 
 
 class Cart(TimeStampMixin):
