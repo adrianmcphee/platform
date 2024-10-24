@@ -47,7 +47,7 @@ class TestOrganisationPointGrantRequest:
         with pytest.raises(ValidationError):
             grant_request = OrganisationPointGrantRequest(
                 organisation=organisation,
-                amount_points=1000,
+                number_of_points=1000,
                 requested_by=person,
                 grant_type=OrganisationPointGrantRequest.GrantType.FREE,
                 rationale=""  # Empty rationale
@@ -58,7 +58,7 @@ class TestOrganisationPointGrantRequest:
         # Should allow paid grant without rationale
         grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
-            amount_points=1000,
+            number_of_points=1000,
             requested_by=person,
             grant_type=OrganisationPointGrantRequest.GrantType.PAID,
             rationale=""
@@ -68,7 +68,7 @@ class TestOrganisationPointGrantRequest:
     def test_grant_request_approval_flow(self, organisation, person):
         grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
-            amount_points=1000,
+            number_of_points=1000,
             requested_by=person,
             grant_type=OrganisationPointGrantRequest.GrantType.FREE,
             rationale="Test rationale"
@@ -83,7 +83,7 @@ class TestPointGrantCartIntegration:
     def test_add_point_grant_to_cart(self, organisation, person, cart):
         grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
-            amount_points=1000,
+            number_of_points=1000,
             requested_by=person,
             grant_type=OrganisationPointGrantRequest.GrantType.PAID,
         )
@@ -103,7 +103,7 @@ class TestPointGrantCartIntegration:
     def test_paid_grant_order_flow(self, organisation, person, cart, sales_order):
         grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
-            amount_points=1000,
+            number_of_points=1000,
             requested_by=person,
             grant_type=OrganisationPointGrantRequest.GrantType.PAID,
         )
@@ -145,7 +145,7 @@ class TestOrganisationPointGrant:
     def test_free_grant_creation(self, organisation, person):
         grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
-            amount_points=1000,
+            number_of_points=1000,
             requested_by=person,
             grant_type=OrganisationPointGrantRequest.GrantType.FREE,
             rationale="Test free grant"
@@ -165,7 +165,7 @@ class TestOrganisationPointGrant:
         # Create free grant
         free_grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
-            amount_points=1000,
+            number_of_points=1000,
             requested_by=person,
             grant_type=OrganisationPointGrantRequest.GrantType.FREE,
             rationale="Test free grant"
@@ -181,7 +181,7 @@ class TestOrganisationPointGrant:
         # Create paid grant
         paid_grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
-            amount_points=1000,
+            number_of_points=1000,
             requested_by=person,
             grant_type=OrganisationPointGrantRequest.GrantType.PAID,
         )

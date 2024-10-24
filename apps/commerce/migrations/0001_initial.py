@@ -80,7 +80,7 @@ class Migration(migrations.Migration):
                 ("created_at", models.DateTimeField(auto_now_add=True, null=True)),
                 ("updated_at", models.DateTimeField(auto_now=True, null=True)),
                 ("id", apps.common.fields.Base58UUIDv5Field(editable=False, primary_key=True, serialize=False)),
-                ("amount_points", models.IntegerField()),
+                ("number_of_points", models.IntegerField()),
                 (
                     "transaction_type",
                     models.CharField(
@@ -196,7 +196,7 @@ class Migration(migrations.Migration):
                 ("created_at", models.DateTimeField(auto_now_add=True, null=True)),
                 ("updated_at", models.DateTimeField(auto_now=True, null=True)),
                 ("id", apps.common.fields.Base58UUIDv5Field(editable=False, primary_key=True, serialize=False)),
-                ("amount_points", models.PositiveIntegerField()),
+                ("number_of_points", models.PositiveIntegerField()),
                 ("rationale", models.TextField()),
                 (
                     "status",
@@ -335,7 +335,7 @@ class Migration(migrations.Migration):
                 ("created_at", models.DateTimeField(auto_now_add=True, null=True)),
                 ("updated_at", models.DateTimeField(auto_now=True, null=True)),
                 ("id", apps.common.fields.Base58UUIDv5Field(editable=False, primary_key=True, serialize=False)),
-                ("amount_points", models.PositiveIntegerField()),
+                ("number_of_points", models.PositiveIntegerField()),
                 (
                     "status",
                     models.CharField(

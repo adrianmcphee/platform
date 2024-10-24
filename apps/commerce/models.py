@@ -258,7 +258,7 @@ class OrganisationPointGrant(TimeStampMixin):
 class OrganisationPointGrantRequest(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grant_requests")
-    amount_points = models.PositiveIntegerField()
+    number_of_points = models.PositiveIntegerField()
     requested_by = models.ForeignKey(
         "talent.Person", on_delete=models.SET_NULL, null=True, related_name="point_grant_requests"
     )
@@ -277,7 +277,7 @@ class OrganisationPointGrantRequest(TimeStampMixin):
             # Create the OrganisationPointGrant
             grant = OrganisationPointGrant.objects.create(
                 organisation=self.organisation,
-                amount=self.amount_points,
+                amount=self.number_of_points,
                 granted_by=self.requested_by,
                 rationale=self.rationale,
                 grant_request=self,
@@ -294,7 +294,7 @@ class OrganisationPointGrantRequest(TimeStampMixin):
 class ProductPointRequest(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
     product = models.ForeignKey("product_management.Product", on_delete=models.CASCADE, related_name="point_requests")
-    amount_points = models.PositiveIntegerField()
+    number_of_points = models.PositiveIntegerField()
     requested_by = models.ForeignKey(
         "talent.Person", on_delete=models.SET_NULL, null=True, related_name="product_point_requests"
     )
@@ -314,12 +314,12 @@ class ProductPointRequest(TimeStampMixin):
 
             # Add points to the product's point account
             product_account, created = ProductPointAccount.objects.get_or_create(product=self.product)
-            product_account.add_points(self.amount_points)
+            product_account.add_points(self.number_of_points)
 
             # Create the PointTransaction
             transaction = PointTransaction.objects.create(
                 product_account=product_account,
-                amount=self.amount_points,
+                amount=self.number_of_points,
                 transaction_type="TRANSFER",
                 description=f"Transfer to product: {self.product.name}",
             )
@@ -412,8 +412,8 @@ class ContributorPointAccount(TimeStampMixin):
     def __str__(self):
         return f"Point Account for {self.person.full_name} - Points: {self.balance_points}"
 
-    def add_points(self, amount_points):
-        self.balance_points += amount_points
+    def add_points(self, number_of_points):
+        self.balance_points += number_of_points
         self.save()
 
 
@@ -426,12 +426,12 @@ class ContributorPointTransaction(TimeStampMixin):
 
     id = Base58UUIDv5Field(primary_key=True)
     point_account = models.ForeignKey(ContributorPointAccount, on_delete=models.CASCADE, related_name="transactions")
-    amount_points = models.IntegerField()  # Points being transacted
+    number_of_points = models.IntegerField()  # Points being transacted
     transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
     description = models.TextField(blank=True)
 
     def __str__(self):
-        return f"{self.get_transaction_type_display()} of {self.amount_points} points for {self.point_account.person.full_name}"
+        return f"{self.get_transaction_type_display()} of {self.number_of_points} points for {self.point_account.person.full_name}"
 
 
 class PlatformFeeConfiguration(TimeStampMixin):
@@ -477,6 +477,7 @@ class CartLineItem(PolymorphicModel, TimeStampMixin):
     )
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
     funding_type = models.CharField(max_length=10, choices=[("USD", "USD"), ("POINTS", "Points")], default="USD")
+    description_text = models.TextField(blank=True, help_text="Additional description or details for this line item")
 
     @property
     def total_price_usd_cents(self):
@@ -843,6 +844,7 @@ class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
     fee_rate = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
     tax_rate = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
     related_bounty_bid = models.ForeignKey("talent.BountyBid", on_delete=models.SET_NULL, null=True, blank=True)
+    description_text = models.TextField(blank=True, help_text="Additional description or details for this line item")
 
     @property
     def total_price_cents(self):
