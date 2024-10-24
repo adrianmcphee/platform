@@ -18,11 +18,7 @@ class OrganisationWalletService(OrganisationWalletServiceInterface):
     ) -> Tuple[bool, str]:
         try:
             with transaction.atomic():
-                wallet = (
-                    OrganisationWallet.objects
-                    .select_for_update()
-                    .get(id=wallet_id)
-                )
+                wallet = OrganisationWallet.objects.select_for_update().get(id=wallet_id)
                 
                 if amount_cents <= 0:
                     return False, "Amount must be positive"
@@ -57,11 +53,7 @@ class OrganisationWalletService(OrganisationWalletServiceInterface):
     ) -> Tuple[bool, str]:
         try:
             with transaction.atomic():
-                wallet = (
-                    OrganisationWallet.objects
-                    .select_for_update()
-                    .get(id=wallet_id)
-                )
+                wallet = OrganisationWallet.objects.select_for_update().get(id=wallet_id)
                 
                 if amount_cents <= 0:
                     return False, "Amount must be positive"
