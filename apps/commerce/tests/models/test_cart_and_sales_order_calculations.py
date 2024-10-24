@@ -96,6 +96,14 @@ def test_cart_and_sales_order_totals_match(setup_data):
     assert cart.total_usd_cents_excluding_fees_and_taxes == bounty.reward_in_usd_cents
     assert cart.total_usd_cents_including_fees_and_taxes == bounty.reward_in_usd_cents + expected_fee + expected_tax
 
+    sales_order.create_line_items_from_cart()
+    assert sales_order.line_items.count() == cart.line_items.count()
+    for so_item, cart_item in zip(sales_order.line_items.all(), cart.line_items.all()):
+        assert so_item.item_type == cart_item.item_type
+        assert so_item.quantity == cart_item.quantity
+        assert so_item.unit_price_usd_cents == cart_item.unit_price_usd_cents
+        assert so_item.bounty == cart_item.bounty
+
 @pytest.mark.django_db
 def test_cart_update_totals_updates_sales_order(setup_data):
     person, organisation, cart, sales_order, bounty, product = setup_data
@@ -131,6 +139,12 @@ def test_cart_update_totals_updates_sales_order(setup_data):
 
     sales_tax = cart.line_items.get(item_type=CartLineItem.ItemType.SALES_TAX)
     assert sales_tax.unit_price_usd_cents == int(10000 * 0.10)
+
+    sales_order.create_line_items_from_cart()
+    assert sales_order.line_items.count() == 3  # Bounty, Platform Fee, and Sales Tax
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY).exists()
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).exists()
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).exists()
 
 @pytest.mark.django_db
 def test_multiple_bounties_and_fees(setup_data):
@@ -232,3 +246,66 @@ def test_different_country_tax_rates(setup_data):
     jp_tax_item = cart.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).first()
     assert jp_tax_item is not None
     assert jp_tax_item.unit_price_usd_cents == int(bounty.reward_in_usd_cents * 0.08)
+
+@pytest.mark.django_db
+def test_sales_order_line_item_creation(setup_data):
+    person, organisation, cart, sales_order, bounty, product = setup_data
+    
+    # Create CartLineItems
+    CartLineItem.objects.create(
+        cart=cart,
+        item_type=CartLineItem.ItemType.BOUNTY,
+        quantity=1,
+        unit_price_usd_cents=bounty.reward_in_usd_cents,
+        bounty=bounty,
+        funding_type=bounty.reward_type
+    )
+    
+    cart.update_totals()
+    
+    # Create SalesOrderLineItems
+    sales_order.create_line_items_from_cart()
+    
+    # Check that SalesOrderLineItems were created correctly
+    assert sales_order.line_items.count() == cart.line_items.count()
+    
+    for so_item, cart_item in zip(sales_order.line_items.all(), cart.line_items.all()):
+        assert so_item.item_type == cart_item.item_type
+        assert so_item.quantity == cart_item.quantity
+        assert so_item.unit_price_usd_cents == cart_item.unit_price_usd_cents
+        assert so_item.unit_price_points == cart_item.unit_price_points
+        assert so_item.bounty == cart_item.bounty
+        assert so_item.description_text == cart_item.description_text
+    
+    # Check specific line items
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY).exists()
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).exists()
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).exists()
+
+@pytest.mark.django_db
+def test_sales_order_finalize(setup_data):
+    person, organisation, cart, sales_order, bounty, product = setup_data
+    
+    # Create CartLineItems
+    CartLineItem.objects.create(
+        cart=cart,
+        item_type=CartLineItem.ItemType.BOUNTY,
+        quantity=1,
+        unit_price_usd_cents=bounty.reward_in_usd_cents,
+        bounty=bounty,
+        funding_type=bounty.reward_type
+    )
+    
+    cart.update_totals()
+    
+    # Finalize the order
+    sales_order.finalize_order()
+    
+    # Check that SalesOrderLineItems were created
+    assert sales_order.line_items.count() == cart.line_items.count()
+    assert sales_order.status == SalesOrder.OrderStatus.PAYMENT_PROCESSING
+    
+    # Check that all necessary line items exist
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY).exists()
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.PLATFORM_FEE).exists()
+    assert sales_order.line_items.filter(item_type=CartLineItem.ItemType.SALES_TAX).exists()

@@ -750,6 +750,7 @@ class SalesOrder(TimeStampMixin):
     def process_payment(self):
         try:
             self.validate_order()
+            self.create_line_items_from_cart()  # Create SalesOrderLineItems
         except ValidationError as e:
             error_msg = str(e)
             logger.error(error_msg)
@@ -824,6 +825,27 @@ class SalesOrder(TimeStampMixin):
         if not self.organisation_id and self.cart:
             self.organisation = self.cart.organisation
         super().save(*args, **kwargs)
+
+    def create_line_items_from_cart(self):
+        for cart_item in self.cart.line_items.all():
+            SalesOrderLineItem.objects.create(
+                sales_order=self,
+                item_type=cart_item.item_type,
+                quantity=cart_item.quantity,
+                unit_price_usd_cents=cart_item.unit_price_usd_cents,
+                unit_price_points=cart_item.unit_price_points,
+                bounty=cart_item.bounty,
+                fee_rate=cart_item.fee_rate if hasattr(cart_item, 'fee_rate') else None,
+                tax_rate=cart_item.tax_rate if hasattr(cart_item, 'tax_rate') else None,
+                related_bounty_bid=cart_item.related_bounty_bid,
+                description_text=cart_item.description_text
+            )
+
+    def finalize_order(self):
+        self.create_line_items_from_cart()
+        self.status = self.OrderStatus.PAYMENT_PROCESSING
+        self.save()
+        # Additional logic for processing payment, etc.
 
 
 class SalesOrderLineItem(PolymorphicModel, TimeStampMixin):
