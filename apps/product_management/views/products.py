@@ -183,34 +183,7 @@ class ProductInitiativesView(utils.BaseProductDetailView, TemplateView):
         context["initiatives"] = initiatives
         return context
 
-class ProductSettingView(LoginRequiredMixin, common_mixins.AttachmentMixin, UpdateView):
-    model = Product
-    form_class = ProductForm
-    template_name = "product_management/dashboard/product_setting.html"
-    login_url = "sign_in"
 
-    def get_success_url(self):
-        return reverse("product-setting", args=(self.object.id,))
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        initial = {}
-        owner = self.object.get_owner()
-        if isinstance(owner, Person):
-            initial_make_me_owner = owner == self.request.user.person
-            initial = {"make_me_owner": initial_make_me_owner}
-            context["make_me_owner"] = initial_make_me_owner
-        elif isinstance(owner, Organisation):
-            initial = {"organisation": owner}
-            context["organisation"] = owner
-
-        context["form"] = self.form_class(instance=self.object, initial=initial)
-        context["product_instance"] = self.object
-        return context
-
-    def form_valid(self, form):
-        return super().form_valid(form)
-    
 class ProductRoleAssignmentView(utils.BaseProductDetailView, TemplateView):
     template_name = "product_management/product_people.html"
 
