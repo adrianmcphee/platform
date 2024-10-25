@@ -86,3 +86,26 @@ class OrderService(OrderServiceInterface):
             logger.error(f"Error validating sales order {order_id}: {str(e)}")
             return False, [f"Error validating order: {str(e)}"]
 
+    def process_paid_point_grants(self, order_id: str) -> Tuple[bool, str]:
+        try:
+            with transaction.atomic():
+                order = SalesOrder.objects.get(id=order_id)
+                if order.status != SalesOrder.OrderStatus.PAID:
+                    return False, "Order is not paid"
+                
+                point_grant_service = OrganisationPointGrantService()
+                
+                for item in order.line_items.filter(item_type=SalesOrderLineItem.ItemType.POINT_GRANT):
+                    success, message = point_grant_service.process_paid_grant(
+                        grant_request_id=item.point_grant_request.id,
+                        sales_order_item_id=item.id
+                    )
+                    if not success:
+                        raise ValidationError(f"Failed to process paid grant: {message}")
+                
+                return True, "All paid point grants processed successfully"
+        except SalesOrder.DoesNotExist:
+            return False, "Order not found"
+        except Exception as e:
+            logger.error(f"Error processing paid point grants: {str(e)}")
+            return False, str(e)

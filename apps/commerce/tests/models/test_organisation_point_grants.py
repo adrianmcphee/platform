@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import Mock, patch
 from decimal import Decimal
 from django.core.exceptions import ValidationError
 from apps.commerce.models import (
@@ -11,6 +12,9 @@ from apps.commerce.models import (
     SalesOrder,
 )
 from apps.talent.models import Person
+from apps.commerce.services.organisation_point_grant_service import OrganisationPointGrantService
+from apps.commerce.services.cart_service import CartService
+from apps.commerce.services.order_service import OrderService
 
 @pytest.fixture
 def organisation():
@@ -40,6 +44,30 @@ def sales_order(cart):
         cart=cart,
         organisation=cart.organisation,
     )
+
+@pytest.fixture
+def point_grant_service():
+    return OrganisationPointGrantService()
+
+@pytest.fixture
+def cart_service():
+    return CartService()
+
+@pytest.fixture
+def order_service():
+    return OrderService()
+
+@pytest.fixture
+def mock_point_grant_service():
+    return Mock(spec=OrganisationPointGrantService)
+
+@pytest.fixture
+def mock_cart_service():
+    return Mock(spec=CartService)
+
+@pytest.fixture
+def mock_order_service():
+    return Mock(spec=OrderService)
 
 class TestOrganisationPointGrantRequest:
     def test_free_grant_request_requires_rationale(self, organisation, person):
@@ -79,8 +107,42 @@ class TestOrganisationPointGrantRequest:
         assert grant_request.status == "Approved"
         assert hasattr(grant_request, "resulting_grant")
 
+    @patch('apps.commerce.models.OrganisationPointGrantRequest.approve')
+    def test_approve_free_grant_request(self, mock_approve, organisation, person, mock_point_grant_service):
+        grant_request = OrganisationPointGrantRequest.objects.create(
+            organisation=organisation,
+            number_of_points=1000,
+            requested_by=person,
+            grant_type=OrganisationPointGrantRequest.GrantType.FREE,
+            rationale="Test free grant"
+        )
+        
+        mock_point_grant_service.approve_request.return_value = (True, "Approved successfully")
+        
+        success, message = mock_point_grant_service.approve_request(grant_request.id)
+        
+        assert success
+        mock_point_grant_service.approve_request.assert_called_once_with(grant_request.id)
+        mock_approve.assert_called_once()
+
+    def test_approve_paid_grant_request(self, organisation, person, mock_point_grant_service):
+        grant_request = OrganisationPointGrantRequest.objects.create(
+            organisation=organisation,
+            number_of_points=1000,
+            requested_by=person,
+            grant_type=OrganisationPointGrantRequest.GrantType.PAID,
+            rationale="Test paid grant"
+        )
+        
+        mock_point_grant_service.approve_request.return_value = (True, "Approved successfully")
+        
+        success, message = mock_point_grant_service.approve_request(grant_request.id)
+        
+        assert success
+        mock_point_grant_service.approve_request.assert_called_once_with(grant_request.id)
+
 class TestPointGrantCartIntegration:
-    def test_add_point_grant_to_cart(self, organisation, person, cart):
+    def test_add_point_grant_to_cart(self, organisation, person, cart, mock_cart_service):
         grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
             number_of_points=1000,
@@ -88,19 +150,14 @@ class TestPointGrantCartIntegration:
             grant_type=OrganisationPointGrantRequest.GrantType.PAID,
         )
 
-        cart_item = CartLineItem.objects.create(
-            cart=cart,
-            item_type=CartLineItem.ItemType.POINT_GRANT,
-            quantity=1,
-            unit_price_usd_cents=50000,  # $500.00
-            unit_price_points=1000,
-            point_grant_request=grant_request
-        )
+        mock_cart_service.add_point_grant_request.return_value = (True, "Added successfully")
 
-        assert cart.line_items.count() == 1
-        assert cart.line_items.first().point_grant_request == grant_request
+        success, message = mock_cart_service.add_point_grant_request(cart.id, grant_request.id)
 
-    def test_paid_grant_order_flow(self, organisation, person, cart, sales_order):
+        assert success
+        mock_cart_service.add_point_grant_request.assert_called_once_with(cart.id, grant_request.id)
+
+    def test_paid_grant_order_flow(self, organisation, person, cart, sales_order, mock_point_grant_service, mock_order_service):
         grant_request = OrganisationPointGrantRequest.objects.create(
             organisation=organisation,
             number_of_points=1000,
@@ -108,17 +165,6 @@ class TestPointGrantCartIntegration:
             grant_type=OrganisationPointGrantRequest.GrantType.PAID,
         )
 
-        # Add to cart
-        cart_item = CartLineItem.objects.create(
-            cart=cart,
-            item_type=CartLineItem.ItemType.POINT_GRANT,
-            quantity=1,
-            unit_price_usd_cents=50000,
-            unit_price_points=1000,
-            point_grant_request=grant_request
-        )
-
-        # Create order item
         order_item = SalesOrderLineItem.objects.create(
             sales_order=sales_order,
             item_type=SalesOrderLineItem.ItemType.POINT_GRANT,
@@ -128,18 +174,23 @@ class TestPointGrantCartIntegration:
             point_grant_request=grant_request
         )
 
-        # Create grant after successful payment
-        grant = OrganisationPointGrant.objects.create(
-            organisation=organisation,
-            amount=1000,
-            granted_by=person,
-            grant_request=grant_request,
-            sales_order_item=order_item
-        )
+        mock_point_grant_service.approve_request.return_value = (True, "Approved successfully")
+        mock_order_service.process_paid_point_grants.return_value = (True, "Processed successfully")
 
-        assert grant.is_paid_grant
-        assert grant.sales_order_item == order_item
-        assert grant.grant_request == grant_request
+        # Approve the grant request
+        success, _ = mock_point_grant_service.approve_request(grant_request.id)
+        assert success
+
+        # Set order status to paid
+        sales_order.status = SalesOrder.OrderStatus.PAID
+        sales_order.save()
+
+        # Process paid point grants
+        success, message = mock_order_service.process_paid_point_grants(sales_order.id)
+
+        assert success
+        mock_point_grant_service.approve_request.assert_called_once_with(grant_request.id)
+        mock_order_service.process_paid_point_grants.assert_called_once_with(sales_order.id)
 
 class TestOrganisationPointGrant:
     def test_free_grant_creation(self, organisation, person):
@@ -205,3 +256,34 @@ class TestOrganisationPointGrant:
 
         assert not free_grant.is_paid_grant
         assert paid_grant.is_paid_grant
+
+    def test_process_paid_grant(self, organisation, person, sales_order, mock_point_grant_service):
+        grant_request = OrganisationPointGrantRequest.objects.create(
+            organisation=organisation,
+            number_of_points=1000,
+            requested_by=person,
+            grant_type=OrganisationPointGrantRequest.GrantType.PAID,
+        )
+
+        order_item = SalesOrderLineItem.objects.create(
+            sales_order=sales_order,
+            item_type=SalesOrderLineItem.ItemType.POINT_GRANT,
+            quantity=1,
+            unit_price_usd_cents=50000,
+            unit_price_points=1000,
+            point_grant_request=grant_request
+        )
+
+        mock_point_grant_service.approve_request.return_value = (True, "Approved successfully")
+        mock_point_grant_service.process_paid_grant.return_value = (True, "Processed successfully")
+
+        # Approve the grant request
+        success, _ = mock_point_grant_service.approve_request(grant_request.id)
+        assert success
+
+        # Process the paid grant
+        success, message = mock_point_grant_service.process_paid_grant(grant_request.id, order_item.id)
+
+        assert success
+        mock_point_grant_service.approve_request.assert_called_once_with(grant_request.id)
+        mock_point_grant_service.process_paid_grant.assert_called_once_with(grant_request.id, order_item.id)

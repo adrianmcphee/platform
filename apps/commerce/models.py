@@ -318,3 +318,116 @@ class TaxRate(models.Model):
     def __str__(self):
         return f"{self.country_code} - {self.name}: {self.rate:.2%}"
 
+class OrganisationPointGrantRequest(TimeStampMixin):
+    class GrantType(models.TextChoices):
+        FREE = "FREE", "Free"
+        PAID = "PAID", "Paid"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grant_requests")
+    number_of_points = models.PositiveIntegerField()
+    requested_by = models.ForeignKey(
+        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="point_grant_requests"
+    )
+    rationale = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=[("Pending", "Pending"), ("Approved", "Approved"), ("Rejected", "Rejected")],
+        default="Pending",
+    )
+    grant_type = models.CharField(max_length=4, choices=GrantType.choices, default=GrantType.FREE)
+
+    def __str__(self):
+        return f"{self.get_grant_type_display()} Grant Request for {self.organisation.name}: {self.number_of_points} points"
+
+    def clean(self):
+        if self.grant_type == self.GrantType.FREE and not self.rationale:
+            raise ValidationError("Rationale is required for free grant requests.")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
+class OrganisationPointGrant(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grants")
+    amount = models.PositiveIntegerField()
+    granted_by = models.ForeignKey(
+        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="granted_points"
+    )
+    rationale = models.TextField()
+    grant_request = models.OneToOneField(
+        OrganisationPointGrantRequest,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resulting_grant",
+    )
+    sales_order_item = models.OneToOneField(
+        SalesOrderLineItem,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resulting_grant"
+    )
+
+    @property
+    def is_paid_grant(self):
+        return self.sales_order_item is not None
+
+    def __str__(self):
+        grant_type = "Paid" if self.is_paid_grant else "Free"
+        return f"{grant_type} Grant of {self.amount} points to {self.organisation.name}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Update the organisation's point balance
+        self.organisation.point_account.balance += self.amount
+        self.organisation.point_account.save()
+        
+        # Create a PointTransaction
+        PointTransaction.objects.create(
+            account=self.organisation.point_account,
+            amount=self.amount,
+            transaction_type=PointTransaction.TransactionType.GRANT,
+            description=f"Grant: {self.rationale}"
+        )
+
+class ProductPointRequest(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    product = models.ForeignKey("product_management.Product", on_delete=models.CASCADE, related_name="point_requests")
+    number_of_points = models.PositiveIntegerField()
+    requested_by = models.ForeignKey(
+        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="product_point_requests"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=[("Pending", "Pending"), ("Approved", "Approved"), ("Rejected", "Rejected")],
+        default="Pending",
+    )
+    resulting_transaction = models.OneToOneField(
+        PointTransaction, on_delete=models.SET_NULL, null=True, blank=True, related_name="product_point_request"
+    )
+
+class PlatformFeeConfiguration(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    percentage = models.PositiveIntegerField(default=10, validators=[MinValueValidator(1), MaxValueValidator(100)])
+    applies_from_date = models.DateTimeField()
+
+    @property
+    def percentage_decimal(self):
+        return Decimal(self.percentage) / Decimal(100)
+
+    @classmethod
+    def get_active_configuration(cls):
+        active_config = cls.objects.filter(applies_from_date__lte=timezone.now()).order_by('-applies_from_date').first()
+        if not active_config:
+            # Return a default configuration or raise a specific exception
+            return cls(percentage=5)  # Default 5% fee
+        return active_config
+
+    def __str__(self):
+        return f"{self.percentage}% Platform Fee (from {self.applies_from_date})"
+
+    class Meta:
+        get_latest_by = "applies_from_date"
