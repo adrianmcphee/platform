@@ -335,3 +335,139 @@ class ChallengeService(ChallengeServiceInterface):
             'created_at': challenge.created_at.isoformat(),
             'updated_at': challenge.updated_at.isoformat()
         }
+
+    def get_challenge_details(self, challenge_id: str) -> Dict:
+        """Get detailed information about a specific challenge"""
+        try:
+            challenge = Challenge.objects.get(id=challenge_id)
+            return self._serialize_challenge_details(challenge)
+        except Challenge.DoesNotExist:
+            logger.error(f"Challenge not found: {challenge_id}")
+            return {}
+
+    def get_challenge_bounties(self, challenge_id: str) -> List[Dict]:
+        """Get bounties for a specific challenge"""
+        bounties = Bounty.objects.filter(challenge_id=challenge_id)
+        return [self._serialize_bounty(bounty) for bounty in bounties]
+
+    def check_challenge_permission(self, challenge_id: str, user_id: str) -> bool:
+        """Check if user has permission to modify the challenge"""
+        try:
+            challenge = Challenge.objects.get(id=challenge_id)
+            ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
+            return ProductRoleAssignment.objects.filter(
+                person_id=user_id,
+                product=challenge.product,
+                role__in=['ADMIN', 'MANAGER']
+            ).exists()
+        except Challenge.DoesNotExist:
+            return False
+
+    def check_contributor_agreement(self, product_id: str, person_id: str) -> bool:
+        """Check if person has signed the contributor agreement for the product"""
+        Person = apps.get_model('talent', 'Person')
+        try:
+            person = Person.objects.get(id=person_id)
+            return person.contributor_agreement.filter(agreement_template__product_id=product_id).exists()
+        except Person.DoesNotExist:
+            return False
+
+    def get_contributor_agreement_template(self, product_id: str) -> Optional[Dict]:
+        """Get the contributor agreement template for the product"""
+        Product = apps.get_model('product_management', 'Product')
+        try:
+            product = Product.objects.get(id=product_id)
+            template = product.contributor_agreement_templates.first()
+            return self._serialize_agreement_template(template) if template else None
+        except Product.DoesNotExist:
+            return None
+
+    def update_challenge(self, challenge_id: str, details: Dict, updater_id: str) -> Tuple[bool, str]:
+        """Update challenge details"""
+        try:
+            with transaction.atomic():
+                challenge = Challenge.objects.get(id=challenge_id)
+                if not self.check_challenge_permission(challenge_id, updater_id):
+                    return False, "No permission to update challenge"
+                
+                for field, value in details.items():
+                    setattr(challenge, field, value)
+                challenge.save()
+
+                return True, "Challenge updated successfully"
+        except Challenge.DoesNotExist:
+            return False, "Challenge not found"
+        except Exception as e:
+            logger.error(f"Error updating challenge: {str(e)}")
+            return False, str(e)
+
+    def can_delete_challenge(self, challenge_id: str, person_id: str) -> bool:
+        """Check if person can delete the challenge"""
+        return self.check_challenge_permission(challenge_id, person_id)
+
+    def delete_challenge(self, challenge_id: str, deleter_id: str) -> Tuple[bool, str]:
+        """Delete a challenge"""
+        try:
+            with transaction.atomic():
+                challenge = Challenge.objects.get(id=challenge_id)
+                if not self.can_delete_challenge(challenge_id, deleter_id):
+                    return False, "No permission to delete challenge"
+                
+                challenge.delete()
+                return True, "Challenge deleted successfully"
+        except Challenge.DoesNotExist:
+            return False, "Challenge not found"
+        except Exception as e:
+            logger.error(f"Error deleting challenge: {str(e)}")
+            return False, str(e)
+
+    def get_bounty_statuses(self) -> Dict:
+        """Get all bounty statuses"""
+        return {status.name: status.value for status in Bounty.BountyStatus}
+
+    def _serialize_challenge_details(self, challenge: Challenge) -> Dict:
+        """Serialize challenge with more details for the detail view"""
+        basic_info = self._serialize_challenge(challenge)
+        basic_info.update({
+            'description': challenge.description,
+            'video_url': challenge.video_url,
+            'auto_approve_bounty_claims': challenge.auto_approve_bounty_claims,
+            'product': self._serialize_product(challenge.product),
+            'initiative': self._serialize_initiative(challenge.initiative) if challenge.initiative else None,
+        })
+        return basic_info
+
+    def _serialize_bounty(self, bounty: Bounty) -> Dict:
+        """Serialize bounty for API response"""
+        return {
+            'id': bounty.id,
+            'title': bounty.title,
+            'description': bounty.description,
+            'status': bounty.status,
+            'reward_type': bounty.reward_type,
+            'reward_amount': bounty.reward_in_usd_cents if bounty.reward_type == 'USD' else bounty.reward_in_points,
+        }
+
+    def _serialize_product(self, product: Product) -> Dict:
+        """Serialize product for API response"""
+        return {
+            'id': product.id,
+            'name': product.name,
+            'slug': product.slug,
+        }
+
+    def _serialize_initiative(self, initiative: Initiative) -> Dict:
+        """Serialize initiative for API response"""
+        return {
+            'id': initiative.id,
+            'name': initiative.name,
+            'status': initiative.status,
+        }
+
+    def _serialize_agreement_template(self, template) -> Dict:
+        """Serialize agreement template for API response"""
+        return {
+            'id': template.id,
+            'name': template.name,
+            'content': template.content,
+        }

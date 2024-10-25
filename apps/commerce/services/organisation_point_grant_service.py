@@ -103,31 +103,80 @@ class OrganisationPointGrantService(OrganisationPointGrantServiceInterface):
                         rationale=request.rationale,
                         grant_request_id=request.id
                     )
+                    if success:
+                        request.status = "Approved"
+                        request.save()
+                        return True, "Free grant request approved and grant created"
+                    else:
+                        return False, f"Failed to create free grant: {message}"
                 elif request.grant_type == OrganisationPointGrantRequest.GrantType.PAID:
-                    # For paid grants, we assume the SalesOrderLineItem has already been created
-                    # and associated with the request. We need to fetch it here.
-                    try:
-                        sales_order_item = SalesOrderLineItem.objects.get(point_grant_request=request)
-                        success, message = self.create_grant(
-                            organisation_id=request.organisation.id,
-                            amount=request.number_of_points,
-                            granted_by_id=request.requested_by.id,
-                            rationale=request.rationale,
-                            grant_request_id=request.id,
-                            sales_order_item_id=sales_order_item.id
-                        )
-                    except SalesOrderLineItem.DoesNotExist:
-                        return False, "Associated SalesOrderLineItem not found for paid grant request"
+                    request.status = "Approved"
+                    request.save()
+                    return True, "Paid grant request approved"
                 else:
                     return False, "Invalid grant type"
-                
-                if success:
-                    request.approve()
-                    return True, "Request approved and grant created successfully"
-                else:
-                    return False, f"Failed to create grant: {message}"
         except OrganisationPointGrantRequest.DoesNotExist:
             return False, "Request not found"
         except Exception as e:
             logger.error(f"Error approving point grant request: {str(e)}")
             return False, str(e)
+
+    def process_paid_grant(self, grant_request_id: str, sales_order_item_id: str) -> Tuple[bool, str]:
+        try:
+            with transaction.atomic():
+                request = OrganisationPointGrantRequest.objects.get(id=grant_request_id)
+                sales_order_item = SalesOrderLineItem.objects.get(id=sales_order_item_id)
+                
+                if request.status != "Approved":
+                    return False, "Grant request is not approved"
+                
+                success, message = self.create_grant(
+                    organisation_id=request.organisation.id,
+                    amount=request.number_of_points,
+                    granted_by_id=request.requested_by.id,
+                    rationale=request.rationale,
+                    grant_request_id=request.id,
+                    sales_order_item_id=sales_order_item.id
+                )
+                
+                if success:
+                    return True, "Paid grant processed successfully"
+                else:
+                    return False, f"Failed to process paid grant: {message}"
+        except (OrganisationPointGrantRequest.DoesNotExist, SalesOrderLineItem.DoesNotExist) as e:
+            return False, f"{e.__class__.__name__}: {str(e)}"
+        except Exception as e:
+            logger.error(f"Error processing paid grant: {str(e)}")
+            return False, str(e)
+
+    def reject_request(self, request_id: str) -> Tuple[bool, str]:
+        try:
+            with transaction.atomic():
+                request = OrganisationPointGrantRequest.objects.get(id=request_id)
+                if request.status != "Pending":
+                    return False, "Request is not in a pending state"
+                
+                request.status = "Rejected"
+                request.save()
+                return True, "Request rejected successfully"
+        except OrganisationPointGrantRequest.DoesNotExist:
+            return False, "Request not found"
+        except Exception as e:
+            logger.error(f"Error rejecting point grant request: {str(e)}")
+            return False, str(e)
+
+    def get_request(self, request_id: str) -> Optional[Dict]:
+        try:
+            request = OrganisationPointGrantRequest.objects.get(id=request_id)
+            return {
+                'id': request.id,
+                'organisation': request.organisation.name,
+                'number_of_points': request.number_of_points,
+                'requested_by': request.requested_by.full_name,
+                'rationale': request.rationale,
+                'grant_type': request.grant_type,
+                'status': request.status,
+                'created_at': request.created_at,
+            }
+        except OrganisationPointGrantRequest.DoesNotExist:
+            return None

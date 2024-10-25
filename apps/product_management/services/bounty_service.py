@@ -5,13 +5,16 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models import Q
 from django.apps import apps
+from django.core.paginator import Paginator
 
 from ..interfaces import BountyServiceInterface
 from ..models import (
     Bounty,
     BountySkill,
     Challenge,
-    Product
+    Product,
+    Person,
+    BountyClaim
 )
 
 logger = logging.getLogger(__name__)
@@ -370,3 +373,85 @@ class BountyService(BountyServiceInterface):
         claim.save()
 
         return True, "Claim withdrawn successfully"
+
+    def get_bounties(
+        self,
+        filters: Dict[str, Any] = None,
+        paginate: bool = True,
+        page: int = 1,
+        per_page: int = 51
+    ) -> Tuple[List[Dict], int]:
+        queryset = Bounty.objects.all()
+
+        if filters:
+            if expertise := filters.get("expertise"):
+                queryset = queryset.filter(expertise=expertise)
+            if status := filters.get("status"):
+                queryset = queryset.filter(status=status)
+            if skill := filters.get("skill"):
+                queryset = queryset.filter(skill=skill)
+
+        queryset = queryset.select_related("challenge", "skill").prefetch_related("expertise")
+
+        if paginate:
+            paginator = Paginator(queryset, per_page)
+            page_obj = paginator.get_page(page)
+            bounties = page_obj.object_list
+            total_count = paginator.count
+        else:
+            bounties = queryset
+            total_count = queryset.count()
+
+        return [self._serialize_bounty(bounty) for bounty in bounties], total_count
+
+    def get_bounty_details(self, bounty_id: str, user_id: Optional[str] = None) -> Dict:
+        bounty = Bounty.objects.get(id=bounty_id)
+        details = self._serialize_bounty(bounty)
+
+        if user_id:
+            person = Person.objects.get(id=user_id)
+            details.update({
+                "can_be_claimed": bounty.status == Bounty.BountyStatus.AVAILABLE and not BountyClaim.objects.filter(bounty=bounty, person=person).exists(),
+                "can_be_modified": self._can_manage_bounty(bounty.product_id, user_id),
+                "created_bounty_claim_request": BountyClaim.objects.filter(bounty=bounty, person=person, status=BountyClaim.Status.REQUESTED).exists(),
+            })
+
+        return details
+
+    def get_product_bounties(self, product_id: str) -> List[Dict]:
+        bounties = Bounty.objects.filter(challenge__product_id=product_id).exclude(
+            challenge__status=Challenge.ChallengeStatus.DRAFT
+        )
+        return [self._serialize_bounty(bounty) for bounty in bounties]
+
+    def create_bounty_claim(self, bounty_id: str, person_id: str) -> Tuple[bool, str]:
+        try:
+            bounty = Bounty.objects.get(id=bounty_id)
+            person = Person.objects.get(id=person_id)
+
+            if bounty.status != Bounty.BountyStatus.AVAILABLE:
+                return False, "This bounty is not available for claiming"
+
+            if BountyClaim.objects.filter(bounty=bounty, person=person).exists():
+                return False, "You have already claimed this bounty"
+
+            BountyClaim.objects.create(
+                bounty=bounty,
+                person=person,
+                status=BountyClaim.Status.REQUESTED
+            )
+            return True, "Bounty claim created successfully"
+        except (Bounty.DoesNotExist, Person.DoesNotExist):
+            return False, "Bounty or person not found"
+
+    def delete_bounty_claim(self, claim_id: str, person_id: str) -> Tuple[bool, str]:
+        try:
+            claim = BountyClaim.objects.get(id=claim_id, person_id=person_id)
+            if claim.status != BountyClaim.Status.REQUESTED:
+                return False, "Only active claims can be cancelled"
+            
+            claim.status = BountyClaim.Status.CANCELLED
+            claim.save()
+            return True, "Bounty claim cancelled successfully"
+        except BountyClaim.DoesNotExist:
+            return False, "Bounty claim not found"

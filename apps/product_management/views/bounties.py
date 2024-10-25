@@ -3,18 +3,19 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.http import JsonResponse, HttpResponseRedirect
-from django.db import models
 from django.contrib import messages
 
-from ..models import Bounty, Challenge, Product
+from ..models import Challenge, Product
 from ..forms import BountyForm
 from .. import utils
 from apps.talent.utils import serialize_skills
-from apps.talent.models import Skill, Expertise, BountyClaim
+from apps.talent.models import Skill, Expertise
 from apps.talent.forms import PersonSkillFormSet
+from ..services.bounty_service import BountyService
+
+bounty_service = BountyService()
 
 class BountyListView(ListView):
-    model = Bounty
     context_object_name = "bounties"
     template_name = "product_management/bounty/list.html"
     paginate_by = 51
@@ -25,22 +26,21 @@ class BountyListView(ListView):
         return ["product_management/bounty/list.html"]
 
     def get_queryset(self):
-        filters = ~models.Q(challenge__status=Challenge.ChallengeStatus.DRAFT)
-
+        filters = {}
         if expertise := self.request.GET.get("expertise"):
-            filters &= models.Q(expertise=expertise)
-
+            filters["expertise"] = expertise
         if status := self.request.GET.get("status"):
-            filters &= models.Q(status=status)
-
+            filters["status"] = status
         if skill := self.request.GET.get("skill"):
-            filters &= models.Q(skill=skill)
-        return Bounty.objects.filter(filters).select_related("challenge", "skill").prefetch_related("expertise")
+            filters["skill"] = skill
+        
+        bounties, _ = bounty_service.get_bounties(filters=filters, page=self.request.GET.get('page', 1), per_page=self.paginate_by)
+        return bounties
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["BountyStatus"] = Bounty.BountyStatus
-
+        context["BountyStatus"] = bounty_service.get_bounty_statuses()
+        
         expertises = []
         if skill := self.request.GET.get("skill"):
             expertises = Expertise.get_roots().filter(skill=skill)
@@ -66,71 +66,49 @@ class BountyListView(ListView):
                 {
                     "list_html": list_html,
                     "expertise_html": expertise_html,
-                    "item_found_count": context["object_list"].count(),
+                    "item_found_count": len(context["object_list"]),
                 }
             )
         return super().render_to_response(context, **response_kwargs)
 
 class ProductBountyListView(utils.BaseProductDetailView, ListView):
-    model = Bounty
     context_object_name = "bounties"
     template_name = "product_management/product_bounties.html"
 
     def get_queryset(self):
         product = self.get_context_data().get("product")
-        return Bounty.objects.filter(challenge__product=product).exclude(
-            challenge__status=Challenge.ChallengeStatus.DRAFT
-        )
+        return bounty_service.get_product_bounties(product.id)
 
 class BountyDetailView(utils.BaseProductDetailView, DetailView):
-    model = Bounty
     template_name = "product_management/bounty_detail.html"
+
+    def get_object(self):
+        return bounty_service.get_bounty_details(self.kwargs.get('pk'), self.request.user.id if self.request.user.is_authenticated else None)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         bounty = self.object
-        user = self.request.user
         
         context.update({
-            "product": bounty.challenge.product,
-            "challenge": bounty.challenge,
-            "claimed_by": bounty.claimed_by,
-            "show_actions": False,
-            "can_be_claimed": False,
-            "can_be_modified": False,
-            "is_product_admin": False,
-            "created_bounty_claim_request": False,
-            "bounty_claim": None,
+            "product": bounty['challenge']['product'],
+            "challenge": bounty['challenge'],
+            "claimed_by": bounty.get('claimed_by'),
+            "show_actions": bounty.get('can_be_claimed', False) or bounty.get('can_be_modified', False) or bounty.get('created_bounty_claim_request', False),
+            "can_be_claimed": bounty.get('can_be_claimed', False),
+            "can_be_modified": bounty.get('can_be_modified', False),
+            "is_product_admin": bounty.get('can_be_modified', False),
+            "created_bounty_claim_request": bounty.get('created_bounty_claim_request', False),
+            "bounty_claim": bounty.get('bounty_claim'),
         })
-
-        if user.is_authenticated:
-            person = user.person
-            bounty_claim = bounty.bountyclaim_set.filter(person=person).first()
-
-            context["can_be_modified"] = utils.has_product_modify_permission(user, context["product"])
-
-            if bounty.status == Bounty.BountyStatus.AVAILABLE:
-                context["can_be_claimed"] = not bounty_claim
-
-            if bounty_claim and bounty_claim.status == BountyClaim.Status.REQUESTED and not bounty.claimed_by:
-                context["created_bounty_claim_request"] = True
-                context["bounty_claim"] = bounty_claim
-
-        context["show_actions"] = any([
-            context["can_be_claimed"],
-            context["can_be_modified"],
-            context["created_bounty_claim_request"]
-        ])
 
         return context
 
 class CreateBountyView(LoginRequiredMixin, utils.BaseProductDetailView, CreateView):
-    model = Bounty
     form_class = BountyForm
     template_name = "product_management/create_bounty.html"
 
     def get_success_url(self):
-        return reverse("challenge_detail", args=(self.object.challenge.product.slug, self.object.challenge.pk))
+        return reverse("challenge_detail", args=(self.object['challenge']['product']['slug'], self.object['challenge']['id']))
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -140,122 +118,89 @@ class CreateBountyView(LoginRequiredMixin, utils.BaseProductDetailView, CreateVi
         return context
 
     def form_valid(self, form):
-        form.instance.challenge = Challenge.objects.get(pk=self.kwargs.get("challenge_id"))
-        form.instance.skill = Skill.objects.get(id=form.cleaned_data.get("skill"))
-        response = super().form_valid(form)
-        if form.cleaned_data.get("expertise_ids"):
-            form.instance.expertise.add(
-                *Expertise.objects.filter(id__in=form.cleaned_data.get("expertise_ids").split(","))
-            )
-        return response
+        challenge_id = self.kwargs.get("challenge_id")
+        success, message, bounty_id = bounty_service.create_bounty(challenge_id, form.cleaned_data, self.request.user.id)
+        if success:
+            self.object = bounty_service.get_bounty_details(bounty_id)
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            form.add_error(None, message)
+            return self.form_invalid(form)
 
 class UpdateBountyView(LoginRequiredMixin, utils.BaseProductDetailView, UpdateView):
-    model = Bounty
     form_class = BountyForm
     template_name = "product_management/update_bounty.html"
 
+    def get_object(self):
+        return bounty_service.get_bounty_details(self.kwargs.get('pk'))
+
     def get_success_url(self):
-        return reverse("challenge_detail", args=(self.object.challenge.product.slug, self.object.challenge.pk))
+        return reverse("challenge_detail", args=(self.object['challenge']['product']['slug'], self.object['challenge']['id']))
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["challenge"] = self.object.challenge
+        context["challenge"] = self.object['challenge']
         context["skills"] = [serialize_skills(skill) for skill in Skill.get_roots()]
         context["empty_form"] = PersonSkillFormSet().empty_form
         return context
 
     def form_valid(self, form):
-        form.instance.skill = Skill.objects.get(id=form.cleaned_data.get("skill"))
-        response = super().form_valid(form)
-        if form.cleaned_data.get("expertise_ids"):
-            form.instance.expertise.set(
-                Expertise.objects.filter(id__in=form.cleaned_data.get("expertise_ids").split(","))
-            )
-        return response
+        success, message = bounty_service.update_bounty_status(self.kwargs.get('pk'), form.cleaned_data, self.request.user.id)
+        if success:
+            self.object = bounty_service.get_bounty_details(self.kwargs.get('pk'))
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            form.add_error(None, message)
+            return self.form_invalid(form)
 
 class DeleteBountyView(LoginRequiredMixin, DeleteView):
-    model = Bounty
-    
     def get_success_url(self):
-        return reverse("challenge_detail", args=(self.object.challenge.product.slug, self.object.challenge.pk))
+        return reverse("challenge_detail", args=(self.object['challenge']['product']['slug'], self.object['challenge']['id']))
 
     def delete(self, request, *args, **kwargs):
-        self.object = self.get_object()
-        success_url = self.get_success_url()
-        self.object.delete()
-        messages.success(request, "The bounty has been successfully deleted.")
-        return HttpResponseRedirect(success_url)
-
-# class BountyClaimView(LoginRequiredMixin, CreateView):
-#     form_class = BountyClaimForm
-
-#     def post(self, request, pk, *args, **kwargs):
-#         form = self.form_class(request.POST)
-#         if not form.is_valid():
-#             return JsonResponse({"errors": form.errors}, status=400)
-
-#         bounty = get_object_or_404(Bounty, pk=pk)
-#         instance = form.save(commit=False)
-#         instance.bounty = bounty
-#         instance.person = request.user.person
-#         instance.status = BountyClaim.Status.REQUESTED
-#         instance.save()
-
-#         return render(
-#             request,
-#             "product_management/partials/buttons/delete_bounty_claim_button.html",
-#             context={"bounty_claim": instance},
-#         )
+        success, message = bounty_service.delete_bounty(self.kwargs.get('pk'), request.user.id)
+        if success:
+            messages.success(request, "The bounty has been successfully deleted.")
+        else:
+            messages.error(request, message)
+        return HttpResponseRedirect(self.get_success_url())
 
 def bounty_claim_actions(request, pk):
-    instance = get_object_or_404(BountyClaim, pk=pk)
     action_type = request.GET.get("action")
-    
-    if action_type == "accept":
-        instance.status = BountyClaim.Status.GRANTED
-        BountyClaim.objects.filter(bounty__challenge=instance.bounty.challenge).exclude(pk=pk).update(status=BountyClaim.Status.REJECTED)
-    elif action_type == "reject":
-        instance.status = BountyClaim.Status.REJECTED
+    success, message = bounty_service.process_claim(pk, request.user.id, action_type)
+    if success:
+        return redirect(reverse("dashboard-product-bounties", args=(message,)))
     else:
-        return JsonResponse({"error": "Invalid action"}, status=400)
-
-    instance.save()
-    return redirect(reverse("dashboard-product-bounties", args=(instance.bounty.challenge.product.slug,)))
+        return JsonResponse({"error": message}, status=400)
 
 class DeleteBountyClaimView(LoginRequiredMixin, DeleteView):
-    model = BountyClaim
     success_url = reverse_lazy("dashboard-bounty-requests")
 
     def delete(self, request, *args, **kwargs):
-        self.object = self.get_object()
-        if self.object.status == BountyClaim.Status.REQUESTED:
-            self.object.status = BountyClaim.Status.CANCELLED
-            self.object.save()
+        success, message = bounty_service.delete_bounty_claim(self.kwargs.get('pk'), request.user.id)
+        if success:
             messages.success(request, "The bounty claim has been successfully cancelled.")
         else:
-            messages.error(request, "Only active claims can be cancelled.")
+            messages.error(request, message)
 
         if request.htmx:
+            bounty = bounty_service.get_bounty_details(message)
             return render(
                 request,
                 "product_management/partials/buttons/create_bounty_claim_button.html",
-                {"bounty": self.object.bounty},
+                {"bounty": bounty},
             )
 
         return HttpResponseRedirect(self.get_success_url())
 
 class DashboardProductBountiesView(LoginRequiredMixin, ListView):
-    model = BountyClaim
     context_object_name = "bounty_claims"
     template_name = "product_management/dashboard/manage_bounties.html"
 
     def get_queryset(self):
         product_slug = self.kwargs.get("product_slug")
         product = get_object_or_404(Product, slug=product_slug)
-        return BountyClaim.objects.filter(
-            bounty__challenge__product=product,
-            status=BountyClaim.Status.REQUESTED,
-        )
+        return bounty_service.get_bounty_claims(product.id)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -263,27 +208,24 @@ class DashboardProductBountiesView(LoginRequiredMixin, ListView):
         return context
 
 class DashboardProductBountyFilterView(LoginRequiredMixin, ListView):
-    model = Bounty
     template_name = "product_management/dashboard/bounty_table.html"
     context_object_name = "bounties"
 
     def get_queryset(self):
         product = get_object_or_404(Product, slug=self.kwargs.get("product_slug"))
-        queryset = Bounty.objects.filter(challenge__product=product)
-
+        filters = {}
+        
         if query_parameter := self.request.GET.get("q"):
             for q in query_parameter.split(" "):
                 key, value = q.split(":")
                 if key == "sort":
-                    if value == "reward-asc":
-                        queryset = queryset.order_by("reward_amount")
-                    elif value == "reward-desc":
-                        queryset = queryset.order_by("-reward_amount")
+                    filters["sort"] = value
 
         if search_query := self.request.GET.get("search-bounty"):
-            queryset = queryset.filter(challenge__title__icontains=search_query)
+            filters["search"] = search_query
 
-        return queryset
+        bounties, _ = bounty_service.get_bounties(filters=filters)
+        return bounties
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)

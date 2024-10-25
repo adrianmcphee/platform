@@ -152,3 +152,45 @@ class CartService(CartServiceInterface):
             
         except Cart.DoesNotExist:
             return False, ["Cart not found"]
+
+    def add_point_grant_request(
+        self,
+        cart_id: str,
+        grant_request_id: str,
+        quantity: int = 1
+    ) -> Tuple[bool, str]:
+        try:
+            with transaction.atomic():
+                cart = Cart.objects.select_for_update().get(id=cart_id)
+                
+                if cart.status != Cart.CartStatus.OPEN:
+                    return False, "Cart is not open"
+                
+                grant_request = OrganisationPointGrantRequest.objects.get(id=grant_request_id)
+                
+                if grant_request.grant_type != OrganisationPointGrantRequest.GrantType.PAID:
+                    return False, "Only paid grant requests can be added to cart"
+                
+                # Create line item
+                CartLineItem.objects.create(
+                    cart=cart,
+                    item_type=CartLineItem.ItemType.POINT_GRANT,
+                    quantity=quantity,
+                    unit_price_points=grant_request.number_of_points,
+                    point_grant_request=grant_request
+                )
+                
+                # Update totals
+                success, message = self.update_totals(cart_id)
+                if not success:
+                    raise ValidationError(message)
+                
+                return True, "Point grant request added to cart"
+                
+        except Cart.DoesNotExist:
+            return False, "Cart not found"
+        except OrganisationPointGrantRequest.DoesNotExist:
+            return False, "Grant request not found"
+        except Exception as e:
+            logger.error(f"Error adding point grant request to cart: {str(e)}")
+            return False, str(e)

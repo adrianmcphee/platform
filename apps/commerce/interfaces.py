@@ -103,6 +103,16 @@ class CartServiceInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def add_point_grant_request(
+        self,
+        cart_id: str,
+        grant_request_id: str,
+        quantity: int = 1
+    ) -> Tuple[bool, str]:
+        """Add a point grant request to the cart"""
+        pass
+
 class OrderServiceInterface(ABC):
     @abstractmethod
     def create_from_cart(
@@ -126,6 +136,11 @@ class OrderServiceInterface(ABC):
         Validate order state
         Returns tuple of (is_valid, list_of_error_messages)
         """
+        pass
+
+    @abstractmethod
+    def process_paid_point_grants(self, order_id: str) -> Tuple[bool, str]:
+        """Process paid point grants after successful payment"""
         pass
 
 class PaymentStrategyInterface(ABC):
@@ -257,12 +272,17 @@ class OrganisationPointGrantServiceInterface(ABC):
         """Get details of a specific point grant"""
         pass
 
-class OrganisationPointGrantRequestServiceInterface(ABC):
     @abstractmethod
     def approve_request(self, request_id: str) -> Tuple[bool, str]:
         """Approve a point grant request"""
         pass
 
+    @abstractmethod
+    def process_paid_grant(self, grant_request_id: str, sales_order_item_id: str) -> Tuple[bool, str]:
+        """Process a paid grant after successful payment"""
+        pass
+
+class OrganisationPointGrantRequestServiceInterface(ABC):
     @abstractmethod
     def reject_request(self, request_id: str) -> Tuple[bool, str]:
         """Reject a point grant request"""

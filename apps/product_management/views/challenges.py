@@ -6,26 +6,28 @@ from django.http import HttpResponseRedirect
 from django.contrib import messages
 from django.db.models import Sum, Case, When, Value, IntegerField
 
-from ..models import Challenge, Product, Initiative, Bounty
+from ..models import Product, Initiative
 from ..forms import ChallengeForm
 from .. import utils
 from apps.talent.forms import PersonSkillFormSet
 from apps.talent.models import BountyClaim
 from apps.security.models import ProductRoleAssignment
+from ..services.challenge_service import ChallengeService
+
+challenge_service = ChallengeService()
 
 class ChallengeListView(ListView):
-    model = Challenge
     context_object_name = "challenges"
     template_name = "product_management/challenges.html"
     paginate_by = 10
 
     def get_queryset(self):
-        queryset = super().get_queryset()
-        return queryset.exclude(status=Challenge.ChallengeStatus.DRAFT)
+        filters = {'statuses': ['ACTIVE', 'BLOCKED', 'COMPLETED']}  # Exclude DRAFT status
+        return challenge_service.get_filtered_challenges(self.kwargs.get('product_slug'), filters)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["challenge_status"] = Challenge.ChallengeStatus
+        context["challenge_status"] = challenge_service.get_challenge_statuses()
         return context
 
 class ProductChallengesView(utils.BaseProductDetailView, ListView):
@@ -34,54 +36,44 @@ class ProductChallengesView(utils.BaseProductDetailView, ListView):
 
     def get_queryset(self):
         product = self.get_context_data()["product"]
-        return Challenge.objects.filter(product=product).annotate(
-            custom_order=Case(
-                When(status=Challenge.ChallengeStatus.ACTIVE, then=Value(0)),
-                When(status=Challenge.ChallengeStatus.BLOCKED, then=Value(1)),
-                When(status=Challenge.ChallengeStatus.COMPLETED, then=Value(2)),
-                When(status=Challenge.ChallengeStatus.CANCELLED, then=Value(3)),
-                default=Value(4),
-                output_field=IntegerField(),
-            )
-        ).order_by("custom_order")
+        return challenge_service.get_filtered_challenges(product.id, {})
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["challenge_status"] = Challenge.ChallengeStatus
+        context["challenge_status"] = challenge_service.get_challenge_statuses()
         return context
 
 class ChallengeDetailView(utils.BaseProductDetailView, DetailView):
-    model = Challenge
     context_object_name = "challenge"
     template_name = "product_management/challenge_detail.html"
+
+    def get_object(self):
+        return challenge_service.get_challenge_details(self.kwargs.get('pk'))
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         challenge = self.object
         user = self.request.user
 
-        context["BountyStatus"] = Bounty.BountyStatus
-        context["bounties"] = challenge.bounty_set.all()
-        context["total_reward"] = challenge.get_total_reward()
-        context["does_have_permission"] = utils.has_product_modify_permission(user, context.get("product"))
+        context["BountyStatus"] = challenge_service.get_bounty_statuses()
+        context["bounties"] = challenge_service.get_challenge_bounties(challenge['id'])
+        context["total_reward"] = challenge_service.calculate_rewards(challenge['id'])
+        context["does_have_permission"] = challenge_service.check_challenge_permission(challenge['id'], user.id)
 
         if user.is_authenticated:
             person = user.person
-            context["agreement_status"] = person.contributor_agreement.filter(
-                agreement_template__product=challenge.product
-            ).exists()
-            context["agreement_template"] = challenge.product.contributor_agreement_templates.first()
+            context["agreement_status"] = challenge_service.check_contributor_agreement(challenge['product']['id'], person.id)
+            context["agreement_template"] = challenge_service.get_contributor_agreement_template(challenge['product']['id'])
 
         return context
 
 class CreateChallengeView(LoginRequiredMixin, utils.BaseProductDetailView, CreateView):
-    model = Challenge
     form_class = ChallengeForm
     template_name = "product_management/create_challenge.html"
     login_url = "sign_in"
 
     def get_success_url(self):
-        return reverse("challenge_detail", args=(self.object.product.slug, self.object.id))
+        return reverse("challenge_detail", args=(self.object['product']['slug'], self.object['id']))
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -91,45 +83,73 @@ class CreateChallengeView(LoginRequiredMixin, utils.BaseProductDetailView, Creat
         return context
 
     def form_valid(self, form):
-        form.instance.product = get_object_or_404(Product, slug=self.kwargs.get("product_slug"))
-        return super().form_valid(form)
+        product = get_object_or_404(Product, slug=self.kwargs.get("product_slug"))
+        success, message, challenge_id = challenge_service.create_challenge(
+            product.id,
+            form.cleaned_data['title'],
+            form.cleaned_data['description'],
+            form.cleaned_data.get('initiative'),
+            self.request.user.id,
+            form.cleaned_data
+        )
+        if success:
+            self.object = challenge_service.get_challenge_details(challenge_id)
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            form.add_error(None, message)
+            return self.form_invalid(form)
 
 class UpdateChallengeView(LoginRequiredMixin, utils.BaseProductDetailView, UpdateView):
-    model = Challenge
     form_class = ChallengeForm
     template_name = "product_management/update_challenge.html"
     login_url = "sign_in"
 
+    def get_object(self):
+        return challenge_service.get_challenge_details(self.kwargs.get('pk'))
+
     def get_success_url(self):
-        return reverse("challenge_detail", args=(self.object.product.slug, self.object.id))
+        return reverse("challenge_detail", args=(self.object['product']['slug'], self.object['id']))
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["product"] = self.object.product
+        context["product"] = self.object['product']
         return context
 
     def form_valid(self, form):
-        return super().form_valid(form)
+        success, message = challenge_service.update_challenge(self.kwargs.get('pk'), form.cleaned_data, self.request.user.id)
+        if success:
+            self.object = challenge_service.get_challenge_details(self.kwargs.get('pk'))
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            form.add_error(None, message)
+            return self.form_invalid(form)
 
 class DeleteChallengeView(LoginRequiredMixin, DeleteView):
-    model = Challenge
     template_name = "product_management/delete_challenge.html"
     login_url = "sign_in"
 
+    def get_object(self):
+        return challenge_service.get_challenge_details(self.kwargs.get('pk'))
+
     def get_success_url(self):
-        return reverse("product_challenges", args=[self.object.product.slug])
+        return reverse("product_challenges", args=[self.object['product']['slug']])
 
     def dispatch(self, request, *args, **kwargs):
         challenge = self.get_object()
         person = request.user.person
-        if challenge.can_delete_challenge(person) or challenge.created_by == person:
+        if challenge_service.can_delete_challenge(challenge['id'], person.id):
             return super().dispatch(request, *args, **kwargs)
         messages.error(request, "You do not have rights to remove this challenge.")
-        return redirect("challenge_detail", product_slug=challenge.product.slug, pk=challenge.pk)
+        return redirect("challenge_detail", product_slug=challenge['product']['slug'], pk=challenge['id'])
 
     def delete(self, request, *args, **kwargs):
-        messages.success(request, "The challenge has been successfully deleted!")
-        return super().delete(request, *args, **kwargs)
+        success, message = challenge_service.delete_challenge(self.get_object()['id'], request.user.id)
+        if success:
+            messages.success(request, "The challenge has been successfully deleted!")
+            return HttpResponseRedirect(self.get_success_url())
+        else:
+            messages.error(request, message)
+            return self.get(request, *args, **kwargs)
 
 def redirect_challenge_to_bounties(request):
     return redirect(reverse("bounties"))
