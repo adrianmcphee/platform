@@ -147,6 +147,7 @@ class PaymentStrategyInterface(ABC):
     @abstractmethod
     def process_payment(
         self,
+        wallet_id: str,
         amount_cents: int,
         payment_details: Dict,
         **kwargs
@@ -154,17 +155,6 @@ class PaymentStrategyInterface(ABC):
         """
         Process a payment
         Returns (success, message, transaction_id)
-        """
-        pass
-
-    @abstractmethod
-    def validate_payment_details(
-        self,
-        payment_details: Dict
-    ) -> Tuple[bool, List[str]]:
-        """
-        Validate payment details
-        Returns (is_valid, list_of_error_messages)
         """
         pass
 
@@ -291,4 +281,53 @@ class OrganisationPointGrantRequestServiceInterface(ABC):
     @abstractmethod
     def get_request(self, request_id: str) -> Optional[Dict]:
         """Get details of a specific point grant request"""
+        pass
+
+class PaymentServiceInterface(ABC):
+    @abstractmethod
+    def process_payment(
+        self,
+        amount_cents: int,
+        payment_details: Dict,
+        **kwargs
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Process a payment
+        Returns (success, message, transaction_id)
+        """
+        pass
+
+    @abstractmethod
+    def validate_payment_details(
+        self,
+        payment_details: Dict
+    ) -> Tuple[bool, List[str]]:
+        """
+        Validate payment details
+        Returns (is_valid, list_of_error_messages)
+        """
+        pass
+
+    @abstractmethod
+    def refund_payment(
+        self,
+        transaction_id: str,
+        amount_cents: int,
+        reason: str
+    ) -> Tuple[bool, str]:
+        """
+        Refund a payment
+        Returns (success, message)
+        """
+        pass
+
+    @abstractmethod
+    def get_payment_status(
+        self,
+        transaction_id: str
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Get the status of a payment
+        Returns (success, status, error_message)
+        """
         pass

@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.db.models import Sum, Case, When, Value, IntegerField
@@ -471,3 +471,9 @@ class ChallengeService(ChallengeServiceInterface):
             'name': template.name,
             'content': template.content,
         }
+
+    def get_challenge_statuses(self) -> List[Dict[str, Any]]:
+        return [
+            {"id": status[0], "name": status[1]}
+            for status in Challenge.ChallengeStatus.choices
+        ]

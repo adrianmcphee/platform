@@ -438,3 +438,69 @@ class PlatformFeeConfiguration(TimeStampMixin):
     class Meta:
         get_latest_by = "applies_from_date"
 
+class ContributorWallet(TimeStampMixin):
+    id = Base58UUIDv5Field(primary_key=True)
+    person = models.OneToOneField(Person, on_delete=models.CASCADE, related_name="wallet")
+    balance_usd_in_cents = models.IntegerField(default=0)  # Balance stored as cents for precision
+
+    def __str__(self):
+        return f"Wallet for {self.person.full_name} - USD: ${self.balance_usd_in_cents / 100:.2f}"
+
+    def add_funds(self, amount_cents):
+        self.balance_usd_in_cents += amount_cents
+        self.save()
+
+    def deduct_funds(self, amount_cents):
+        if self.balance_usd_in_cents >= amount_cents:
+            self.balance_usd_in_cents -= amount_cents
+            self.save()
+            return True
+        return False
+
+class ContributorWalletTransaction(TimeStampMixin):
+    class TransactionType(models.TextChoices):
+        CREDIT = "Credit", "Credit"
+        DEBIT = "Debit", "Debit"
+        WITHDRAWAL = "Withdrawal", "Withdrawal"
+
+    class PaymentMethod(models.TextChoices):
+        PAYPAL = "PayPal", "PayPal"
+        USDT = "USDT", "USDT"
+        CREDIT_CARD = "CreditCard", "Credit Card"
+        CONTRIBUTOR_WALLET = "ContributorWallet", "Contributor Wallet"
+
+    class Status(models.TextChoices):
+        PENDING = "Pending", "Pending"
+        COMPLETED = "Completed", "Completed"
+        FAILED = "Failed", "Failed"
+
+    id = Base58UUIDv5Field(primary_key=True)
+    wallet = models.ForeignKey(ContributorWallet, on_delete=models.CASCADE, related_name="transactions")
+    amount_cents = models.IntegerField()  # Amount stored as cents for precision
+    transaction_type = models.CharField(max_length=10, choices=TransactionType.choices)
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, null=True, blank=True)
+    transaction_id = models.CharField(max_length=255, null=True, blank=True)  # External transaction ID
+
+    def __str__(self):
+        return f"{self.get_transaction_type_display()} of ${self.amount_cents / 100:.2f} for {self.wallet.person.full_name}"
+
+    def process(self):
+        if self.status != self.Status.PENDING:
+            return False
+
+        try:
+            if self.transaction_type == self.TransactionType.CREDIT:
+                self.wallet.add_funds(self.amount_cents)
+            elif self.transaction_type in [self.TransactionType.DEBIT, self.TransactionType.WITHDRAWAL]:
+                if not self.wallet.deduct_funds(self.amount_cents):
+                    raise ValueError("Insufficient funds")
+
+            self.status = self.Status.COMPLETED
+            self.save()
+            return True
+        except Exception as e:
+            self.status = self.Status.FAILED
+            self.save()
+            raise e

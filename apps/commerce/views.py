@@ -12,13 +12,19 @@ from apps.product_management.forms import BountyForm
 from django.views.decorators.http import require_http_methods
 
 from .models import (
-    Cart, CartLineItem, SalesOrder, SalesOrderLineItem, OrganisationWallet, PayPalPaymentStrategy, USDTPaymentStrategy,
-    ContributorWallet, ContributorPayPalWithdrawalStrategy, ContributorUSDTWithdrawalStrategy
+    Cart, CartLineItem, SalesOrder, SalesOrderLineItem, OrganisationWallet, ContributorWallet
 )
 from apps.product_management.models import Bounty, Product
 from apps.security.models import OrganisationPersonRoleAssignment
 from apps.security.models import Person
 from .forms import AddToCartForm
+
+from .services.payment_service import PaymentService
+from .services.cart_service import CartService
+from .services.order_service import OrderService
+from .services.organisation_wallet_service import OrganisationWalletService
+from .services.contributor_wallet_service import ContributorWalletService
+from .services.withdrawal_service import PayPalWithdrawalStrategy, USDTWithdrawalStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,7 @@ def bounty_checkout(request):
             return redirect('order_confirmation', order_id=sales_order.id)
         else:
             messages.error(request, message)
-            return redirect('cart')
+        return redirect('cart')
 
     context = {
         'cart': cart,
@@ -73,37 +79,20 @@ def add_to_cart(request):
         form = AddToCartForm(request.POST)
         if form.is_valid():
             try:
-                product = form.cleaned_data['product']
-                bounty = form.cleaned_data['bounty']
-                
-                # Get the organisation from the product
-                organisation = product.organisation
-                if not organisation:
-                    raise ValueError("Product does not have an associated organisation")
-                
-                cart, created = Cart.objects.get_or_create(
-                    person=request.user.person,
-                    organisation=organisation,
-                    status=Cart.CartStatus.OPEN,
-                    defaults={'country': organisation.country}
+                cart_service = CartService()
+                success, message = cart_service.add_item_to_cart(
+                    request.user.person,
+                    form.cleaned_data['product'],
+                    form.cleaned_data['bounty']
                 )
-                
-                CartLineItem.objects.create(
-                    cart=cart,
-                    item_type=CartLineItem.ItemType.BOUNTY,
-                    quantity=1,
-                    unit_price_usd_cents=bounty.reward_in_usd_cents if bounty.reward_type == 'USD' else 0,
-                    unit_price_points=bounty.reward_in_points if bounty.reward_type == 'POINTS' else 0,  # Changed to 0 instead of None
-                    bounty=bounty,
-                    funding_type=bounty.reward_type
-                )
-                
-                cart.update_totals()
-                logger.info(f"Item added to cart {cart.id} successfully")
-                return redirect('commerce:view_cart')
+                if success:
+                    messages.success(request, message)
+                    return redirect('commerce:view_cart')
+                else:
+                    messages.error(request, message)
             except Exception as e:
                 logger.error(f"Error adding item to cart: {str(e)}")
-                form.add_error(None, "An error occurred while adding the item to the cart.")
+                messages.error(request, "An error occurred while adding the item to the cart.")
         else:
             logger.warning(f"Invalid form data: {form.errors}")
     else:
@@ -113,8 +102,30 @@ def add_to_cart(request):
 
 @login_required
 def view_cart(request):
-    # Implement the logic to view the cart
-    return render(request, 'commerce/view_cart.html')
+    cart_service = CartService()
+    cart = cart_service.get_cart(request.user.person)
+    return render(request, 'commerce/view_cart.html', {'cart': cart})
+
+@login_required
+def checkout(request):
+    order_service = OrderService()
+    payment_service = PaymentService()
+    
+    if request.method == 'POST':
+        success, order_id, message = order_service.create_order_from_cart(request.user.person)
+        if success:
+            success, message = payment_service.process_payment(order_id)
+            if success:
+                messages.success(request, message)
+                return redirect('order_confirmation', order_id=order_id)
+            else:
+                messages.error(request, message)
+        else:
+            messages.error(request, message)
+    
+    cart_service = CartService()
+    cart = cart_service.get_cart(request.user.person)
+    return render(request, 'commerce/checkout.html', {'cart': cart})
 
 @login_required
 def checkout_success(request):
@@ -169,8 +180,8 @@ def select_payment_method(request):
 
 @login_required
 def view_wallet(request):
-    wallet = OrganisationWallet.objects.filter(organisation__persons=request.user.person).first()
-    transactions = wallet.transactions.all()[:10] if wallet else []
+    contributor_wallet_service = ContributorWalletService()
+    wallet, transactions = contributor_wallet_service.get_wallet_info(request.user.person)
     return render(request, 'commerce/view_wallet.html', {'wallet': wallet, 'transactions': transactions})
 
 @login_required
@@ -182,21 +193,60 @@ def withdraw_funds(request):
         return redirect('commerce:view_wallet')
     return render(request, 'commerce/withdraw_funds.html')
 
+@login_required
+def organisation_wallet_top_up(request):
+    org_wallet_service = OrganisationWalletService()
+    if request.method == 'POST':
+        amount = request.POST.get('amount')
+        success, message = org_wallet_service.add_funds(request.user.person, amount)
+        if success:
+            messages.success(request, message)
+            return redirect('commerce:view_organisation_wallet')
+        else:
+            messages.error(request, message)
+    return render(request, 'commerce/organisation_wallet_top_up.html')
+
+@login_required
+def view_organisation_wallet(request):
+    org_wallet_service = OrganisationWalletService()
+    wallet, transactions = org_wallet_service.get_wallet_info(request.user.person)
+    return render(request, 'commerce/view_organisation_wallet.html', {'wallet': wallet, 'transactions': transactions})
+
+@login_required
+def view_contributor_wallet(request):
+    contributor_wallet_service = ContributorWalletService()
+    wallet, transactions = contributor_wallet_service.get_wallet_info(request.user.person)
+    return render(request, 'commerce/view_contributor_wallet.html', {'wallet': wallet, 'transactions': transactions})
+
+@login_required
+def contributor_wallet_withdraw(request):
+    contributor_wallet_service = ContributorWalletService()
+    if request.method == 'POST':
+        amount = request.POST.get('amount')
+        payment_method = request.POST.get('payment_method')
+        success, message = contributor_wallet_service.process_withdrawal(request.user.person, amount, payment_method)
+        if success:
+            messages.success(request, message)
+            return redirect('commerce:view_contributor_wallet')
+        else:
+            messages.error(request, message)
+    return render(request, 'commerce/contributor_wallet_withdraw.html')
+
 class OrderHistoryView(ListView):
-    model = SalesOrder
     template_name = 'commerce/order_history.html'
     context_object_name = 'orders'
 
     def get_queryset(self):
-        return SalesOrder.objects.filter(person=self.request.user.person)
+        order_service = OrderService()
+        return order_service.get_order_history(self.request.user.person)
 
 class OrderDetailView(DetailView):
-    model = SalesOrder
     template_name = 'commerce/order_detail.html'
     context_object_name = 'order'
 
-    def get_queryset(self):
-        return SalesOrder.objects.filter(person=self.request.user.person)
+    def get_object(self):
+        order_service = OrderService()
+        return order_service.get_order_detail(self.request.user.person, self.kwargs['pk'])
 
 def handle_checkout_error(request, error_message):
     messages.error(request, error_message)
@@ -215,3 +265,16 @@ class CartView(ListView):
         cart = Cart.objects.filter(person=self.request.user.person, status=Cart.CartStatus.OPEN).first()
         context['cart'] = cart
         return context
+
+@login_required
+def process_payment(request):
+    if request.method == 'POST':
+        payment_service = PaymentService()
+        amount = request.POST.get('amount')
+        method = request.POST.get('method')
+        details = {
+            # ... payment details from the form ...
+        }
+        result = payment_service.process_payment(method, amount, details)
+        # Handle the result...
+    # ...

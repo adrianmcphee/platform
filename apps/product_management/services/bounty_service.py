@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from django.db import transaction
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -11,11 +11,9 @@ from ..interfaces import BountyServiceInterface
 from ..models import (
     Bounty,
     BountySkill,
-    Challenge,
-    Product,
-    Person,
-    BountyClaim
+    Challenge
 )
+from ...talent.models import Person, BountyClaim
 
 logger = logging.getLogger(__name__)
 
@@ -455,3 +453,8 @@ class BountyService(BountyServiceInterface):
             return True, "Bounty claim cancelled successfully"
         except BountyClaim.DoesNotExist:
             return False, "Bounty claim not found"
+
+    def get_bounty_claims(self, bounty_id: str) -> List[Dict[str, Any]]:
+        # Implement the logic to get bounty claims
+        # This is just a placeholder implementation
+        return []
