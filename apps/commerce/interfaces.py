@@ -179,8 +179,8 @@ class TaxServiceInterface(ABC):
         pass
 
     @abstractmethod
-    def get_rate(self, country_code: str) -> Decimal:
-        """Get tax rate for a country"""
+    def get_tax_rate(self, country_code: str) -> Tuple[bool, Decimal]:
+        """Get tax rate for a country, returns (success, rate)"""
         pass
 
 class FeeServiceInterface(ABC):
@@ -193,7 +193,7 @@ class FeeServiceInterface(ABC):
         pass
 
     @abstractmethod
-    def get_current_rate(self) -> Decimal:
+    def get_platform_fee_rate(self) -> Decimal:
         """Get current platform fee rate"""
         pass
 

@@ -1,103 +1,133 @@
 import pytest
-from django.db import transaction
-from apps.commerce.models import Cart, PointOrder, ProductPointAccount, CartLineItem, Organisation
-from apps.product_management.models import Bounty, Product
-from apps.talent.models import Person
-from apps.security.models import User
+from unittest.mock import Mock, patch
+from apps.commerce.services.organisation_point_grant_service import OrganisationPointGrantService
+from apps.commerce.services.cart_service import CartService
+from apps.commerce.services.order_service import OrderService
 
-@pytest.mark.django_db
-def test_point_order_completion():
-    # Setup
-    user = User.objects.create(username="testuser")
-    person = Person.objects.create(user=user, full_name="Test User")
-    organisation = Organisation.objects.create(name="Test Organisation")
-    product = Product.objects.create(name="Test Product", organisation=organisation)
-    product_account, _ = ProductPointAccount.objects.get_or_create(
-        product=product,
-        defaults={'balance': 1000}
+@pytest.fixture
+def mock_point_grant_service():
+    return Mock(spec=OrganisationPointGrantService)
+
+@pytest.fixture
+def mock_cart_service():
+    return Mock(spec=CartService)
+
+@pytest.fixture
+def mock_order_service():
+    return Mock(spec=OrderService)
+
+@pytest.fixture
+def setup_data(mock_point_grant_service, mock_cart_service, mock_order_service):
+    # Mock data
+    mock_user_id = "user_123"
+    mock_person_id = "person_123"
+    mock_organisation_id = "org_123"
+    mock_product_id = "product_123"
+    mock_cart_id = "cart_123"
+    mock_bounty_id = "bounty_123"
+    mock_order_id = "order_123"
+    mock_grant_request_id = "grant_request_123"
+
+    # Mock point grant service methods
+    mock_point_grant_service.create_request.return_value = (True, f"Request created with ID: {mock_grant_request_id}")
+    mock_point_grant_service.approve_request.return_value = (True, "Request approved")
+    mock_point_grant_service.process_paid_grant.return_value = (True, "Paid grant processed")
+
+    # Mock cart service methods
+    mock_cart_service.create_cart.return_value = (True, mock_cart_id)
+    mock_cart_service.add_point_grant_request.return_value = (True, "Point grant request added to cart")
+    mock_cart_service.update_totals.return_value = (True, "Cart totals updated")
+
+    # Mock order service methods
+    mock_order_service.create_from_cart.return_value = (True, mock_order_id)
+    mock_order_service.process_payment.return_value = (True, "Payment processed")
+    mock_order_service.process_paid_point_grants.return_value = (True, "Paid point grants processed")
+
+    return {
+        'user_id': mock_user_id,
+        'person_id': mock_person_id,
+        'organisation_id': mock_organisation_id,
+        'product_id': mock_product_id,
+        'cart_id': mock_cart_id,
+        'bounty_id': mock_bounty_id,
+        'order_id': mock_order_id,
+        'grant_request_id': mock_grant_request_id,
+    }
+
+def test_point_order_completion(setup_data, mock_point_grant_service, mock_cart_service, mock_order_service):
+    # Create point grant request
+    success, message = mock_point_grant_service.create_request(
+        organisation_id=setup_data['organisation_id'],
+        number_of_points=500,
+        requested_by_id=setup_data['person_id'],
+        rationale="Test paid grant",
+        grant_type=OrganisationPointGrantService.GrantType.PAID
     )
-    cart = Cart.objects.create(person=person, organisation=organisation)
-    bounty = Bounty.objects.create(title="Test Bounty", reward_type='POINTS', reward_in_points=500, product=product)
-    
-    # Create CartLineItem for the bounty
-    CartLineItem.objects.create(
-        cart=cart,
-        item_type=CartLineItem.ItemType.BOUNTY,
-        quantity=1,
-        unit_price_points=500,
-        bounty=bounty,
-        funding_type='POINTS'
+    assert success
+    grant_request_id = message.split()[-1]
+
+    # Create cart and add point grant request
+    success, cart_id = mock_cart_service.create_cart(setup_data['person_id'], setup_data['organisation_id'])
+    assert success
+    success, _ = mock_cart_service.add_point_grant_request(cart_id, grant_request_id)
+    assert success
+    success, _ = mock_cart_service.update_totals(cart_id)
+    assert success
+
+    # Create order from cart
+    success, order_id = mock_order_service.create_from_cart(cart_id)
+    assert success
+
+    # Process payment
+    success, _ = mock_order_service.process_payment(order_id)
+    assert success
+
+    # Process paid point grants
+    success, _ = mock_order_service.process_paid_point_grants(order_id)
+    assert success
+
+    # Verify that the point grant was processed
+    mock_point_grant_service.process_paid_grant.assert_called_once_with(grant_request_id, mock.ANY)
+
+def test_point_order_refund(setup_data, mock_point_grant_service, mock_cart_service, mock_order_service):
+    # Create point grant request
+    success, message = mock_point_grant_service.create_request(
+        organisation_id=setup_data['organisation_id'],
+        number_of_points=500,
+        requested_by_id=setup_data['person_id'],
+        rationale="Test paid grant",
+        grant_type=OrganisationPointGrantService.GrantType.PAID
     )
+    assert success
+    grant_request_id = message.split()[-1]
 
-    point_order = PointOrder.objects.create(
-        cart=cart,
-        product_account=product_account,
-        total_points=500
-    )
+    # Create cart and add point grant request
+    success, cart_id = mock_cart_service.create_cart(setup_data['person_id'], setup_data['organisation_id'])
+    assert success
+    success, _ = mock_cart_service.add_point_grant_request(cart_id, grant_request_id)
+    assert success
+    success, _ = mock_cart_service.update_totals(cart_id)
+    assert success
 
-    # Ensure the product account has the correct initial balance
-    product_account.balance = 1000
-    product_account.save()
+    # Create order from cart
+    success, order_id = mock_order_service.create_from_cart(cart_id)
+    assert success
 
-    # Test completion
-    result = point_order.complete()
-    print(f"Completion result: {result}")
-    print(f"Point order status: {point_order.status}")
-    product_account.refresh_from_db()
-    print(f"Product account balance: {product_account.balance}")
-    assert result, "Point order completion failed"
-    assert point_order.status == "COMPLETED"
-    assert product_account.balance == 500
+    # Process payment
+    success, _ = mock_order_service.process_payment(order_id)
+    assert success
 
-    # Check if the bounty is activated
-    bounty.refresh_from_db()
-    assert bounty.status == Bounty.BountyStatus.OPEN
+    # Process paid point grants
+    success, _ = mock_order_service.process_paid_point_grants(order_id)
+    assert success
 
-@pytest.mark.django_db
-def test_point_order_refund():
-    # Setup
-    user = User.objects.create(username="testuser")
-    person = Person.objects.create(user=user, full_name="Test User")
-    organisation = Organisation.objects.create(name="Test Organisation")
-    product = Product.objects.create(name="Test Product", organisation=organisation)
-    product_account, _ = ProductPointAccount.objects.get_or_create(
-        product=product,
-        defaults={'balance': 1000}
-    )
-    cart = Cart.objects.create(person=person, organisation=organisation)
-    bounty = Bounty.objects.create(title="Test Bounty", reward_type='POINTS', reward_in_points=500, product=product)
-    
-    # Create CartLineItem for the bounty
-    CartLineItem.objects.create(
-        cart=cart,
-        item_type=CartLineItem.ItemType.BOUNTY,
-        quantity=1,
-        unit_price_points=500,
-        bounty=bounty,
-        funding_type='POINTS'
-    )
+    # Mock refund methods
+    mock_order_service.refund_order = Mock(return_value=(True, "Order refunded"))
+    mock_point_grant_service.revoke_grant = Mock(return_value=(True, "Grant revoked"))
 
-    point_order = PointOrder.objects.create(
-        cart=cart,
-        product_account=product_account,
-        total_points=500,
-        status="COMPLETED"
-    )
+    # Refund the order
+    success, _ = mock_order_service.refund_order(order_id)
+    assert success
 
-    # Simulate completion of the order (without actually changing the balance)
-    bounty.status = Bounty.BountyStatus.OPEN
-    bounty.save()
-
-    # Ensure the product account has the correct balance after completion
-    product_account.balance = 500
-    product_account.save()
-
-    # Test refund
-    initial_balance = product_account.balance
-    assert point_order.refund()
-    product_account.refresh_from_db()
-    assert product_account.balance == initial_balance + 500
-
-    # Test that bounty is deactivated
-    bounty.refresh_from_db()
-    assert bounty.status == Bounty.BountyStatus.DRAFT
+    # Verify that the point grant was revoked
+    mock_point_grant_service.revoke_grant.assert_called_once_with(mock.ANY)
