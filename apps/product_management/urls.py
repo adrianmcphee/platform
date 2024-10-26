@@ -1,6 +1,6 @@
 from django.urls import path, re_path
 
-from .views import bounties, challenges, products, initiatives, portal, ideas_bugs, product_areas
+from .views import bounties, challenges, products, initiatives, ideas_bugs, product_areas
 from .views.product_area_admin import get_nodes, move_node
 
 urlpatterns = [
@@ -11,7 +11,6 @@ urlpatterns = [
     path("<str:product_slug>/challenge/<int:challenge_id>/bounty/create/", bounties.CreateBountyView.as_view(), name="create-bounty"),
     path("<str:product_slug>/challenge/<int:challenge_id>/bounty/update/<int:pk>/", bounties.UpdateBountyView.as_view(), name="update-bounty"),
     path("<str:product_slug>/challenge/<int:challenge_id>/bounty/delete/<int:pk>/", bounties.DeleteBountyView.as_view(), name="delete-bounty"),
-    # path("bounty-claim/<int:pk>/", bounties.BountyClaimView.as_view(), name="bounty-claim"),
     path("bounty-claim/delete/<int:pk>/", bounties.DeleteBountyClaimView.as_view(), name="delete-bounty-claim"),
 
     # Challenge-related URLs
@@ -37,25 +36,6 @@ urlpatterns = [
     path("<str:product_slug>/initiative/create/", initiatives.CreateInitiativeView.as_view(), name="create-initiative"),
     path("<str:product_slug>/initiative/<int:pk>/", initiatives.InitiativeDetailView.as_view(), name="initiative_detail"),
 
-    # Portal (formerly Dashboard) URLs
-    path("portal/", portal.PortalDashboardView.as_view(), name="dashboard-home"),
-    path("portal/product/<str:product_slug>/<int:default_tab>/", portal.PortalDashboardView.as_view(), name="product-portal"),
-    path("portal/home/", portal.PortalDashboardView.as_view(), name="portal-home"),
-    path("portal/bounties/", portal.ManageBountiesView.as_view(), name="manage-bounties"),
-    path("portal/bounties/bounty-requests/", portal.BountyClaimRequestsView.as_view(), name="portal-bounty-requests"),
-    path("portal/product/<str:product_slug>/tab/<int:default_tab>/", portal.PortalProductDetailView.as_view(), name="portal-product-detail"),
-    path("portal/product/<str:product_slug>/challenges/", portal.DashboardProductChallengesView.as_view(), name="portal-product-challenges"),
-    path("portal/product/<str:product_slug>/challenges/filter/", portal.DashboardProductChallengeFilterView.as_view(), name="portal-product-challenge-filter"),
-    path("portal/product/<str:product_slug>/bounties/", portal.DashboardProductBountiesView.as_view(), name="portal-product-bounties"),
-    path("portal/bounties/action/<int:pk>/", portal.bounty_claim_actions, name="portal-bounties-action"),
-    path("portal/product/<str:product_slug>/bounties/filter/", portal.DashboardProductBountyFilterView.as_view(), name="portal-product-bounty-filter"),
-    path("portal/product/<str:product_slug>/review-work/", portal.ReviewWorkView.as_view(), name="portal-review-work"),
-    path("portal/product/<str:product_slug>/contributor-agreement-templates/", portal.ContributorAgreementTemplateListView.as_view(), name="portal-contributor-agreement-templates"),
-    path("portal/product/<str:product_slug>/user-management/", portal.ManageUsersView.as_view(), name="manage-users"),
-    path("portal/product/<str:product_slug>/add-product-user/", portal.AddProductUserView.as_view(), name="add-product-user"),
-    path("portal/product/<str:product_slug>/product-users/<int:pk>/update/", portal.UpdateProductUserView.as_view(), name="update-product-user"),
-    path("portal/product-setting/<int:pk>/", portal.ProductSettingView.as_view(), name="product-setting"),
-
     # Ideas and Bugs URLs
     path("<str:product_slug>/ideas-and-bugs/", ideas_bugs.ProductIdeasAndBugsView.as_view(), name="product_ideas_bugs"),
     path("<str:product_slug>/idea-list/", ideas_bugs.ProductIdeaListView.as_view(), name="product_idea_list"),
@@ -74,9 +54,7 @@ urlpatterns = [
     path("<str:product_slug>/product-areas/<int:pk>/detail/", product_areas.ProductAreaDetailView.as_view(), name="product_area_detail"),
     path("<str:product_slug>/capability/create/", product_areas.CreateCapabilityView.as_view(), name="create-capability"),
 
-    # Contributor Agreement URLs
-    path("<str:product_slug>/contributor-agreement/<int:pk>/", portal.ContributorAgreementTemplateView.as_view(), name="contributor-agreement-template-detail"),
-    path("<str:product_slug>/contributor-agreement/create/", portal.CreateContributorAgreementTemplateView.as_view(), name="create-contributor-agreement-template"),
+    # Admin URLs
     path('admin/product_management/productarea/get_nodes/', get_nodes, name='get_product_area_nodes'),
     path('admin/product_management/productarea/<str:node_id>/move/', move_node, name='move_product_area_node'),
 ]
