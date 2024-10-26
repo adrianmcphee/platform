@@ -84,6 +84,7 @@ class BaseLineItem(PolymorphicModel, TimeStampMixin):
         SALES_TAX = "SALES_TAX", "Sales Tax"
         INCREASE_ADJUSTMENT = "INCREASE_ADJUSTMENT", "Increase Adjustment"
         DECREASE_ADJUSTMENT = "DECREASE_ADJUSTMENT", "Decrease Adjustment"
+        POINT_GRANT = "POINT_GRANT", "Point Grant"
 
     id = Base58UUIDv5Field(primary_key=True)
     item_type = models.CharField(max_length=25, choices=ItemType.choices)
@@ -93,6 +94,7 @@ class BaseLineItem(PolymorphicModel, TimeStampMixin):
     bounty = models.ForeignKey(Bounty, on_delete=models.CASCADE, null=True, blank=True)
     related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
     description_text = models.TextField(blank=True, help_text="Additional description or details for this line item")
+    point_grant = models.ForeignKey('OrganisationPointGrant', on_delete=models.SET_NULL, null=True, blank=True, related_name="line_items")
 
     class Meta:
         abstract = True
@@ -110,6 +112,8 @@ class CartLineItem(BaseLineItem):
     cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name="line_items")
 
     def __str__(self):
+        if self.item_type == self.ItemType.POINT_GRANT:
+            return f"Point Grant - {self.quantity} x {self.unit_price_points} points"
         return f"{self.get_item_type_display()} - {self.quantity} x ${self.unit_price_usd_cents / 100:.2f}"
 
 
@@ -135,6 +139,8 @@ class SalesOrderLineItem(BaseLineItem):
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name="line_items")
 
     def __str__(self):
+        if self.item_type == self.ItemType.POINT_GRANT:
+            return f"Point Grant - {self.quantity} x {self.unit_price_points} points"
         return f"{self.get_item_type_display()} - {self.quantity} x ${self.unit_price_usd_cents / 100:.2f}"
 
 
@@ -431,3 +437,4 @@ class PlatformFeeConfiguration(TimeStampMixin):
 
     class Meta:
         get_latest_by = "applies_from_date"
+

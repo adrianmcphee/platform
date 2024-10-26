@@ -7,6 +7,8 @@ from ..models import OrganisationPointGrant, OrganisationPointGrantRequest, Orga
 logger = logging.getLogger(__name__)
 
 class OrganisationPointGrantService(OrganisationPointGrantServiceInterface):
+    GrantType = OrganisationPointGrantRequest.GrantType
+
     def create_grant(
         self,
         organisation_id: str,

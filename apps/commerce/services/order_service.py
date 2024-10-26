@@ -2,8 +2,9 @@ from django.db import transaction
 from typing import Tuple, Optional, Dict, List
 import logging
 from ..interfaces import OrderServiceInterface
-from ..models import SalesOrder, Cart
+from ..models import SalesOrder, Cart, SalesOrderLineItem
 from django.core.exceptions import ValidationError
+from .organisation_point_grant_service import OrganisationPointGrantService
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,8 @@ class OrderService(OrderServiceInterface):
                 return False, "Sales order already exists for this cart"
             
             sales_order.organisation = cart.organisation
+            self.create_line_items_from_cart(sales_order, cart)
             sales_order.update_totals()
-            sales_order.create_line_items_from_cart()
             sales_order.save()
             
             return True, "Sales order created successfully"
@@ -88,24 +89,38 @@ class OrderService(OrderServiceInterface):
 
     def process_paid_point_grants(self, order_id: str) -> Tuple[bool, str]:
         try:
-            with transaction.atomic():
-                order = SalesOrder.objects.get(id=order_id)
-                if order.status != SalesOrder.OrderStatus.PAID:
-                    return False, "Order is not paid"
-                
-                point_grant_service = OrganisationPointGrantService()
-                
-                for item in order.line_items.filter(item_type=SalesOrderLineItem.ItemType.POINT_GRANT):
+            order = SalesOrder.objects.get(id=order_id)
+            if order.status != SalesOrder.OrderStatus.PAID:
+                return False, "Order is not paid"
+            
+            point_grant_service = OrganisationPointGrantService()
+            errors = []
+            
+            for item in order.line_items.filter(item_type=SalesOrderLineItem.ItemType.POINT_GRANT):
+                with transaction.atomic():
                     success, message = point_grant_service.process_paid_grant(
                         grant_request_id=item.point_grant_request.id,
                         sales_order_item_id=item.id
                     )
                     if not success:
-                        raise ValidationError(f"Failed to process paid grant: {message}")
-                
-                return True, "All paid point grants processed successfully"
+                        errors.append(f"Failed to process paid grant for item {item.id}: {message}")
+            
+            if errors:
+                return False, "; ".join(errors)
+            return True, "All paid point grants processed successfully"
         except SalesOrder.DoesNotExist:
             return False, "Order not found"
         except Exception as e:
             logger.error(f"Error processing paid point grants: {str(e)}")
             return False, str(e)
+
+    def create_line_items_from_cart(self, sales_order: SalesOrder, cart: Cart) -> None:
+        # Implementation to create line items based on the associated cart
+        for cart_item in cart.items.all():
+            SalesOrderLineItem.objects.create(
+                sales_order=sales_order,
+                item_type=cart_item.item_type,
+                quantity=cart_item.quantity,
+                unit_price=cart_item.unit_price,
+                # Add other fields as necessary
+            )

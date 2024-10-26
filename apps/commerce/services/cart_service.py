@@ -2,7 +2,7 @@ from django.db import transaction
 from typing import Tuple, List, Optional
 import logging
 from ..interfaces import CartServiceInterface, TaxServiceInterface, FeeServiceInterface
-from ..models import Cart, CartLineItem, Bounty
+from ..models import Cart, CartLineItem, Bounty, OrganisationPointGrantRequest
 from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
