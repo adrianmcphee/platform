@@ -5,17 +5,10 @@ admin.site.register([models.Feedback])
 
 @admin.register(models.BountyClaim)
 class BountyClaimAdmin(admin.ModelAdmin):
-    list_display = [
-        "pk",
-        "bounty",
-        "person",
-        "expected_finish_date",
-        "status",
-    ]
+    list_display = ("bounty", "person", "status")
     search_fields = [
         "bounty__title",
         "person__user__username",
-        "expected_finish_date",
         "status",
     ]
 

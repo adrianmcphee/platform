@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import Count, Q
 from django.utils import timezone
 from django.apps import apps
+from django.shortcuts import get_object_or_404
 
 from ..interfaces import ProductSupportServiceInterface
 from ..models import (
@@ -371,3 +372,81 @@ class ProductSupportService(ProductSupportServiceInterface):
                     'voted_ideas': 0
                 }
             }
+
+    def get_product_users_context(self, product_slug):
+        product = get_object_or_404(Product, slug=product_slug)
+        ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
+        users = ProductRoleAssignment.objects.filter(product=product).select_related('person')
+        return {
+            'product': product,
+            'users': users
+        }
+
+    def get_add_product_user_context(self, product_slug):
+        product = get_object_or_404(Product, slug=product_slug)
+        Person = apps.get_model('talent', 'Person')
+        ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
+        available_users = Person.objects.exclude(
+            id__in=ProductRoleAssignment.objects.filter(product=product).values('person_id')
+        )
+        return {
+            'product': product,
+            'available_users': available_users
+        }
+
+    def add_product_user(self, post_data, product_slug):
+        product = get_object_or_404(Product, slug=product_slug)
+        person_id = post_data.get('person_id')
+        role = post_data.get('role')
+        
+        if person_id and role:
+            Person = apps.get_model('talent', 'Person')
+            ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
+            person = get_object_or_404(Person, id=person_id)
+            ProductRoleAssignment.objects.create(product=product, person=person, role=role)
+            return {'success': True, 'product_slug': product_slug}
+        return {'success': False, 'product_slug': product_slug}
+
+    def get_update_product_user_context(self, product_slug, user_pk):
+        product = get_object_or_404(Product, slug=product_slug)
+        ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
+        user_assignment = get_object_or_404(ProductRoleAssignment, product=product, person_id=user_pk)
+        return {
+            'product': product,
+            'user_assignment': user_assignment
+        }
+
+    def update_product_user(self, post_data, product_slug, user_pk):
+        product = get_object_or_404(Product, slug=product_slug)
+        ProductRoleAssignment = apps.get_model('security', 'ProductRoleAssignment')
+        user_assignment = get_object_or_404(ProductRoleAssignment, product=product, person_id=user_pk)
+        new_role = post_data.get('role')
+        
+        if new_role:
+            user_assignment.role = new_role
+            user_assignment.save()
+            return {'success': True, 'product_slug': product_slug}
+        return {'success': False, 'product_slug': product_slug}
+
+    def get_product_setting_context(self, product_pk):
+        product = get_object_or_404(Product, pk=product_pk)
+        return {'product': product}
+
+    def update_product_settings(self, form):
+        if form.is_valid():
+            form.save()
+            return True
+        return False
+
+    def get_contributor_agreement_templates_context(self, product_slug):
+        product = get_object_or_404(Product, slug=product_slug)
+        templates = ProductContributorAgreementTemplate.objects.filter(product=product)
+        return {
+            'product': product,
+            'templates': templates
+        }
+
+    def get_contributor_agreement_templates(self, product_slug):
+        product = get_object_or_404(Product, slug=product_slug)
+        return ProductContributorAgreementTemplate.objects.filter(product=product)
+

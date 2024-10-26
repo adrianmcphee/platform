@@ -1,15 +1,13 @@
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse, reverse_lazy
+from django.urls import reverse
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView, TemplateView
 from django.contrib import messages
-from django.http import HttpResponse, JsonResponse
 
-from apps.product_management.services import ProductService
-from apps.talent.services import BountyService
+from apps.product_management.services.product_support_service import ProductSupportService
+from apps.product_management.services.bounty_service import BountyService
 from apps.security.services import UserService
-from apps.commerce.services import OrganisationService
+from apps.commerce.services.organisation_service import OrganisationService
 from .services import PortalService
 
 class PortalBaseView(LoginRequiredMixin):
@@ -48,7 +46,7 @@ class ManageUsersView(PortalBaseView, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        product_service = ProductService()
+        product_service = ProductSupportService()
         context.update(product_service.get_product_users_context(self.kwargs.get("product_slug")))
         return context
 
@@ -57,12 +55,12 @@ class AddProductUserView(PortalBaseView, CreateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        product_service = ProductService()
+        product_service = ProductSupportService()
         context.update(product_service.get_add_product_user_context(self.kwargs.get("product_slug")))
         return context
 
     def post(self, request, *args, **kwargs):
-        product_service = ProductService()
+        product_service = ProductSupportService()
         result = product_service.add_product_user(request.POST, self.kwargs.get("product_slug"))
         if result['success']:
             messages.success(request, "The user was successfully added!")
@@ -74,7 +72,7 @@ class UpdateProductUserView(PortalBaseView, UpdateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        product_service = ProductService()
+        product_service = ProductSupportService()
         context.update(product_service.get_update_product_user_context(
             self.kwargs.get("product_slug"),
             self.kwargs.get("pk")
@@ -82,7 +80,7 @@ class UpdateProductUserView(PortalBaseView, UpdateView):
         return context
 
     def post(self, request, *args, **kwargs):
-        product_service = ProductService()
+        product_service = ProductSupportService()
         result = product_service.update_product_user(
             request.POST,
             self.kwargs.get("product_slug"),
@@ -97,13 +95,15 @@ class ProductSettingView(PortalBaseView, UpdateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        product_service = ProductService()
+        product_service = ProductSupportService()
         context.update(product_service.get_product_setting_context(self.kwargs.get("pk")))
         return context
 
     def form_valid(self, form):
-        product_service = ProductService()
-        return product_service.update_product_settings(form)
+        product_service = ProductSupportService()
+        if product_service.update_product_settings(form):
+            return super().form_valid(form)
+        return self.form_invalid(form)
 
 class PortalBountyClaimRequestsView(PortalBaseView, ListView):
     template_name = "portal/bounty_claim_requests.html"
@@ -184,12 +184,12 @@ class PortalContributorAgreementTemplateListView(PortalBaseView, ListView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        product_service = ProductService()
+        product_service = ProductSupportService()
         context.update(product_service.get_contributor_agreement_templates_context(self.kwargs.get("product_slug")))
         return context
 
     def get_queryset(self):
-        product_service = ProductService()
+        product_service = ProductSupportService()
         return product_service.get_contributor_agreement_templates(self.kwargs.get("product_slug"))
 
 def bounty_claim_actions(request, pk):

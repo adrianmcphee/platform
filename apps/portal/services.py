@@ -1,11 +1,11 @@
-from apps.product_management.services import ProductService
-from apps.talent.services import BountyService
+from apps.product_management.services.product_support_service import ProductSupportService
+from apps.product_management.services.bounty_service import BountyService
 from apps.security.services import UserService
-from apps.commerce.services import OrganisationService
+from apps.commerce.services.organisation_service import OrganisationService
 
 class PortalService:
     def __init__(self):
-        self.product_service = ProductService()
+        self.product_service = ProductSupportService()
         self.bounty_service = BountyService()
         self.user_service = UserService()
         self.organisation_service = OrganisationService()

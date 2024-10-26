@@ -91,7 +91,7 @@ class CartLineItemInline(admin.TabularInline):
 
 @admin.register(Cart)
 class CartAdmin(admin.ModelAdmin):
-    list_display = ("id", "person", "organisation", "status", "created_at")
+    list_display = ("id", "organisation", "status", "created_at")
     inlines = [CartLineItemInline]
 
 # Keep the CartLineItemAdmin as is
