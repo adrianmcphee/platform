@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import Mock, patch
 from decimal import Decimal
 from apps.commerce.services.cart_service import CartService
 from apps.commerce.services.order_service import OrderService
@@ -7,12 +6,12 @@ from apps.commerce.services.tax_service import TaxService
 from apps.commerce.services.fee_service import FeeService
 
 @pytest.fixture
-def mock_tax_service():
-    return Mock(spec=TaxService)
+def mock_tax_service(mocker):
+    return mocker.Mock(spec=TaxService)
 
 @pytest.fixture
-def mock_fee_service():
-    return Mock(spec=FeeService)
+def mock_fee_service(mocker):
+    return mocker.Mock(spec=FeeService)
 
 @pytest.fixture
 def cart_service(mock_tax_service, mock_fee_service):
@@ -23,7 +22,7 @@ def order_service():
     return OrderService()
 
 @pytest.fixture
-def setup_data(cart_service, order_service):
+def setup_data(mocker, cart_service, order_service):
     # Mock the necessary data and service calls
     mock_cart_id = "mock_cart_id"
     mock_order_id = "mock_order_id"
@@ -31,16 +30,16 @@ def setup_data(cart_service, order_service):
     mock_organisation_id = "mock_organisation_id"
 
     # Mock the cart creation
-    cart_service.create_cart = Mock(return_value=(True, mock_cart_id))
+    mocker.patch.object(cart_service, 'create_cart', return_value=(True, mock_cart_id))
     
     # Mock adding a bounty to the cart
-    cart_service.add_bounty = Mock(return_value=(True, "Bounty added to cart"))
+    mocker.patch.object(cart_service, 'add_bounty', return_value=(True, "Bounty added to cart"))
     
     # Mock updating cart totals
-    cart_service.update_totals = Mock(return_value=(True, "Cart totals updated"))
+    mocker.patch.object(cart_service, 'update_totals', return_value=(True, "Cart totals updated"))
     
     # Mock order creation
-    order_service.create_from_cart = Mock(return_value=(True, mock_order_id))
+    mocker.patch.object(order_service, 'create_from_cart', return_value=(True, mock_order_id))
 
     return {
         'cart_id': mock_cart_id,
@@ -50,7 +49,7 @@ def setup_data(cart_service, order_service):
     }
 
 @pytest.mark.django_db
-def test_cart_and_sales_order_totals_match(setup_data, cart_service, order_service):
+def test_cart_and_sales_order_totals_match(mocker, setup_data, cart_service, order_service):
     cart_id = setup_data['cart_id']
     order_id = setup_data['order_id']
     bounty_id = setup_data['bounty_id']
@@ -68,11 +67,11 @@ def test_cart_and_sales_order_totals_match(setup_data, cart_service, order_servi
     assert success
 
     # Mock get_cart and get_order methods
-    cart_service.get_cart = Mock(return_value={
+    mocker.patch.object(cart_service, 'get_cart', return_value={
         'total_usd_cents_excluding_fees_and_taxes': 10000,
         'total_usd_cents_including_fees_and_taxes': 11500
     })
-    order_service.get_order = Mock(return_value={
+    mocker.patch.object(order_service, 'get_order', return_value={
         'total_usd_cents_excluding_fees_and_taxes': 10000,
         'total_usd_cents_including_fees_and_taxes': 11500
     })
@@ -119,7 +118,7 @@ def test_multiple_bounties_and_fees(setup_data, cart_service, order_service):
     assert sales_tax['unit_price_usd_cents'] == 1500
 
 @pytest.mark.django_db
-def test_different_country_tax_rates(setup_data, cart_service, mock_tax_service):
+def test_different_country_tax_rates(mocker, setup_data, cart_service, mock_tax_service):
     cart_id = setup_data['cart_id']
     bounty_id = setup_data['bounty_id']
     organisation_id = setup_data['organisation_id']
@@ -136,7 +135,7 @@ def test_different_country_tax_rates(setup_data, cart_service, mock_tax_service)
         cart_service.update_totals(cart_id)
 
         # Mock get_cart method
-        cart_service.get_cart = Mock(return_value={
+        mocker.patch.object(cart_service, 'get_cart', return_value={
             'line_items': [
                 {'item_type': 'SALES_TAX', 'unit_price_usd_cents': int(10000 * tax_rate)}
             ]
@@ -147,7 +146,7 @@ def test_different_country_tax_rates(setup_data, cart_service, mock_tax_service)
         assert tax_item['unit_price_usd_cents'] == int(10000 * tax_rate)
 
 @pytest.mark.django_db
-def test_sales_order_finalize(setup_data, cart_service, order_service):
+def test_sales_order_finalize(mocker, setup_data, cart_service, order_service):
     cart_id = setup_data['cart_id']
     order_id = setup_data['order_id']
     bounty_id = setup_data['bounty_id']
@@ -160,12 +159,12 @@ def test_sales_order_finalize(setup_data, cart_service, order_service):
     order_service.create_from_cart(cart_id)
 
     # Finalize the order
-    order_service.finalize_order = Mock(return_value=(True, "Order finalized"))
+    mocker.patch.object(order_service, 'finalize_order', return_value=(True, "Order finalized"))
     success, _ = order_service.finalize_order(order_id)
     assert success
 
     # Mock get_order method
-    order_service.get_order = Mock(return_value={
+    mocker.patch.object(order_service, 'get_order', return_value={
         'status': 'PAYMENT_PROCESSING',
         'line_items': [
             {'item_type': 'BOUNTY'},

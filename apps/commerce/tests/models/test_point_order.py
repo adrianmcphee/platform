@@ -1,32 +1,31 @@
 import pytest
-from unittest.mock import Mock, patch
 from apps.commerce.services.organisation_point_grant_service import OrganisationPointGrantService
 from apps.commerce.services.cart_service import CartService
 from apps.commerce.services.order_service import OrderService
 
 @pytest.fixture
-def mock_point_grant_service():
-    return Mock(spec=OrganisationPointGrantService)
+def mock_point_grant_service(mocker):
+    return mocker.Mock(spec=OrganisationPointGrantService)
 
 @pytest.fixture
-def mock_cart_service():
-    return Mock(spec=CartService)
+def mock_cart_service(mocker):
+    return mocker.Mock(spec=CartService)
 
 @pytest.fixture
-def mock_order_service():
-    return Mock(spec=OrderService)
+def mock_order_service(mocker):
+    return mocker.Mock(spec=OrderService)
 
 @pytest.fixture
 def setup_data(mock_point_grant_service, mock_cart_service, mock_order_service):
-    # Mock data
-    mock_user_id = "user_123"
-    mock_person_id = "person_123"
-    mock_organisation_id = "org_123"
-    mock_product_id = "product_123"
-    mock_cart_id = "cart_123"
-    mock_bounty_id = "bounty_123"
-    mock_order_id = "order_123"
-    mock_grant_request_id = "grant_request_123"
+    # Mock data using Base58UUIDv5Field format
+    mock_user_id = "8HkGVbQnML1cFMZtYNDYj8"
+    mock_person_id = "2ZYmfqLJWFJdQazXkvsT7M"
+    mock_organisation_id = "4RxVKqP9NLGJb1QzHmCeWS"
+    mock_product_id = "6TnFcXwRkMZyD3PsLgAh2Y"
+    mock_cart_id = "3JmBvNpWqKLfS7RxTgDc5H"
+    mock_bounty_id = "5GkDrYtXnPQcF8ZsVfBh1L"
+    mock_order_id = "7LmNwRtYpKJdB9XzCqFg3S"
+    mock_grant_request_id = "9PkMvBtWnLJcR7XzFgDh2Q"
 
     # Mock point grant service methods
     mock_point_grant_service.create_request.return_value = (True, f"Request created with ID: {mock_grant_request_id}")

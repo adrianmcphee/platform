@@ -1,20 +1,19 @@
 import pytest
-from unittest.mock import Mock
 from apps.commerce.services.organisation_point_grant_service import OrganisationPointGrantService
 from apps.commerce.services.cart_service import CartService
 from apps.commerce.services.order_service import OrderService
 
 @pytest.fixture
-def mock_point_grant_service():
-    return Mock(spec=OrganisationPointGrantService)
+def mock_point_grant_service(mocker):
+    return mocker.Mock(spec=OrganisationPointGrantService)
 
 @pytest.fixture
-def mock_cart_service():
-    return Mock(spec=CartService)
+def mock_cart_service(mocker):
+    return mocker.Mock(spec=CartService)
 
 @pytest.fixture
-def mock_order_service():
-    return Mock(spec=OrderService)
+def mock_order_service(mocker):
+    return mocker.Mock(spec=OrderService)
 
 class TestOrganisationPointGrantRequest:
     def test_free_grant_request_requires_rationale(self, mock_point_grant_service):
