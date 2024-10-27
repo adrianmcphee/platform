@@ -7,9 +7,11 @@ class RewardType(str, Enum):
     POINTS = "POINTS"
 
 class BountyStatus(str, Enum):
-    DRAFT = "DRAFT"
-    ACTIVE = "ACTIVE"
-    CLOSED = "CLOSED"
+    FUNDED = "FUNDED"
+    OPEN = "OPEN"
+    CLAIMED = "CLAIMED"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 class BountyPurchaseData(BaseModel):
     model_config = ConfigDict(use_enum_values=True)  # Replace class Config with model_config
