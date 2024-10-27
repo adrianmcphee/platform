@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Optional
 from enum import Enum
 
@@ -12,7 +12,8 @@ class BountyStatus(str, Enum):
     CLOSED = "CLOSED"
 
 class BountyPurchaseData(BaseModel):
-    id: str
+    model_config = ConfigDict(use_enum_values=True)  # Replace class Config with model_config
+
     product_id: str
     title: str
     description: str
@@ -25,11 +26,10 @@ class BountyPurchaseData(BaseModel):
     @classmethod
     def validate_reward(cls, v, info):
         if 'reward_type' in info.data:
-            if info.data['reward_type'] == RewardType.USD and not info.data.get('reward_in_usd_cents'):
-                raise ValueError('USD rewards must specify reward_in_usd_cents')
-            if info.data['reward_type'] == RewardType.POINTS and not info.data.get('reward_in_points'):
-                raise ValueError('POINTS rewards must specify reward_in_points')
+            if info.data['reward_type'] == RewardType.USD:
+                if info.field_name == 'reward_in_usd_cents' and not v:
+                    raise ValueError('USD rewards must specify reward_in_usd_cents')
+            elif info.data['reward_type'] == RewardType.POINTS:
+                if info.field_name == 'reward_in_points' and not v:
+                    raise ValueError('POINTS rewards must specify reward_in_points')
         return v
-
-    class Config:
-        use_enum_values = True  # This will use string values for enums in dict() output

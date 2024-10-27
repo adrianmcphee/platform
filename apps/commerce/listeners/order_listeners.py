@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any
 
 from apps.commerce.services import SalesOrderService
+from apps.commerce.repositories import DjangoOrganisationRepository
 from apps.event_hub.services.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,11 @@ def process_paid_order_items(payload: Dict[str, Any]) -> None:
         if not sales_order_id:
             raise ValueError("Missing required field 'sales_order_id' in payload")
 
-        service = SalesOrderService()
+        # Initialize service with repository
+        org_repository = DjangoOrganisationRepository()
+        service = SalesOrderService(org_repository=org_repository)
+        
+        # Process the order
         success, message = service.process_paid_items(sales_order_id)
         
         if success:
