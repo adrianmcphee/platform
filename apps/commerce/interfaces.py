@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Optional, Dict, List, Any
 from decimal import Decimal
-from apps.common.data_transfer_objects import BountyPurchaseData
+from apps.common.data_transfer_objects import BountyPurchaseData, RewardType, BountyStatus
 
 class OrganisationWalletServiceInterface(ABC):
     @abstractmethod
@@ -360,17 +360,17 @@ class PaymentServiceInterface(ABC):
 
 class BountyServiceInterface(ABC):
     @abstractmethod
-    def get_bounty(self, bounty_id: str) -> Optional[Dict]:
+    def get_bounty(self, bounty_id: str) -> Optional[BountyPurchaseData]:
         """Get details of a specific bounty"""
         pass
 
     @abstractmethod
-    def update_bounty_status(self, bounty_id: str, new_status: str) -> Tuple[bool, str]:
+    def update_bounty_status(self, bounty_id: str, new_status: BountyStatus) -> Tuple[bool, str]:
         """Update the status of a bounty"""
         pass
 
     @abstractmethod
-    def create_bounty(self, bounty_data: Dict) -> Tuple[bool, str, Optional[str]]:
+    def create_bounty(self, bounty_data: BountyPurchaseData) -> Tuple[bool, str, Optional[str]]:
         """
         Create a new bounty
         Returns (success, message, bounty_id)

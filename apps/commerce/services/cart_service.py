@@ -4,7 +4,8 @@ import logging
 from ..interfaces import CartServiceInterface, TaxServiceInterface, FeeServiceInterface, BountyPurchaseInterface
 from ..models import Cart, CartLineItem, OrganisationPointGrantRequest
 from django.core.exceptions import ValidationError
-from apps.common.data_transfer_objects import BountyPurchaseData
+from apps.common.data_transfer_objects import BountyPurchaseData, BountyStatus
+from pydantic import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +31,9 @@ class CartService(CartServiceInterface):
                 if cart.status != Cart.CartStatus.OPEN:
                     return False, "Cart is not open"
                 
-                if bounty_data.status != "DRAFT":
+                if bounty_data.status != BountyStatus.DRAFT:
                     return False, "Item is not available for purchase"
                     
-                # Check using metadata instead of direct field
                 if CartLineItem.objects.filter(
                     cart=cart, 
                     item_type=CartLineItem.ItemType.BOUNTY,
@@ -47,12 +47,10 @@ class CartService(CartServiceInterface):
                     quantity=quantity,
                     unit_price_usd_cents=bounty_data.reward_in_usd_cents,
                     unit_price_points=bounty_data.reward_in_points,
-                    metadata={
-                        'product_id': bounty_data.product_id,
-                        'title': bounty_data.title,
-                        'description': bounty_data.description,
-                        'reward_type': bounty_data.reward_type
-                    }
+                    metadata=bounty_data.dict(
+                        exclude={'status'},  # Don't include status in metadata
+                        exclude_none=True    # Don't include None values
+                    )
                 )
                 
                 success, message = self.update_totals(cart_id)
@@ -63,6 +61,9 @@ class CartService(CartServiceInterface):
                 
         except Cart.DoesNotExist:
             return False, "Cart not found"
+        except ValidationError as e:
+            logger.error(f"Validation error adding item to cart: {str(e)}")
+            return False, str(e)
         except Exception as e:
             logger.error(f"Error adding item to cart: {str(e)}")
             return False, str(e)

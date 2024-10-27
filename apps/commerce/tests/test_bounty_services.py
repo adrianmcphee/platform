@@ -8,6 +8,7 @@ from apps.commerce.services.fee_service import FeeService
 from apps.commerce.services.contributor_wallet_service import ContributorWalletService
 from apps.commerce.services.organisation_wallet_service import OrganisationWalletService
 from apps.product_management.services.bounty_service import BountyService
+from apps.common.data_transfer_objects import BountyPurchaseData, RewardType, BountyStatus
 
 @pytest.fixture
 def mock_tax_service(mocker):
@@ -171,3 +172,18 @@ def test_successful_point_bounty_checkout(cart_service, order_service, mock_boun
     
     order = order_service.get_order(order_id)
     assert order['status'] == 'COMPLETED'
+
+def test_add_bounty_to_cart():
+    bounty_data = BountyPurchaseData(
+        id="2ZEH9Uh6Yt7KPz8LCNRJ1q",
+        product_id="test_product_id",
+        title="Test Bounty",
+        description="Test Description",
+        reward_type=RewardType.USD,
+        reward_in_usd_cents=10000,
+        status=BountyStatus.DRAFT
+    )
+    
+    success, message = cart_service.add_bounty("test_cart_id", bounty_data)
+    assert success
+    assert message == "Item added to cart"
