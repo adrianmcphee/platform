@@ -160,3 +160,29 @@ class SalesOrderService(SalesOrderServiceInterface):
         except Exception as e:
             logger.error(f"Error processing order items: {str(e)}")
             return False, str(e)
+
+    def process_paid_items(self, order_id: str) -> Tuple[bool, str]:
+        """Process items after successful payment"""
+        try:
+            with transaction.atomic():
+                order = SalesOrder.objects.select_for_update().get(id=order_id)
+                
+                for item in order.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY):
+                    bounty_service = BountyService()
+                    success, message, bounty_id = bounty_service.create_bounty_from_cart_item(
+                        product_id=item.metadata['product_id'],
+                        cart_item_data=item.metadata
+                    )
+                    
+                    if not success:
+                        raise ValidationError(f"Failed to create bounty: {message}")
+                    
+                    # Update the line item with the created bounty ID
+                    item.metadata['bounty_id'] = bounty_id
+                    item.save()
+                
+                return True, "Items processed successfully"
+                
+        except Exception as e:
+            logger.error(f"Error processing paid items: {str(e)}")
+            return False, str(e)

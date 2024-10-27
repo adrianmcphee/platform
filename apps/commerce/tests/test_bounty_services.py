@@ -187,3 +187,72 @@ def test_add_bounty_to_cart():
     success, message = cart_service.add_bounty("test_cart_id", bounty_data)
     assert success
     assert message == "Item added to cart"
+
+def test_complete_bounty_purchase_flow():
+    # Setup
+    cart_id = "test_cart_id"
+    bounty_data = BountyPurchaseData(
+        id="test_bounty",
+        product_id="test_product",
+        title="Test Bounty",
+        description="Test Description",
+        reward_type=RewardType.USD,
+        reward_in_usd_cents=10000,
+        status=BountyStatus.DRAFT
+    )
+    
+    # Add to cart
+    success, message = cart_service.add_bounty(cart_id, bounty_data)
+    assert success
+    
+    # Create order
+    success, message, order_id = order_service.create_from_cart(cart_id)
+    assert success
+    assert order_id
+    
+    # Process payment
+    success, message = order_service.process_payment(order_id)
+    assert success
+    
+    # Verify bounty creation
+    order = order_service.get_order(order_id)
+    bounty_id = order.line_items.first().metadata['bounty_id']
+    bounty = bounty_service.get_bounty(bounty_id)
+    
+    assert bounty.status == BountyStatus.FUNDED
+    assert bounty.reward_in_usd_cents == 10000
+    assert bounty.product_id == "test_product"
+
+def test_points_bounty_purchase_flow():
+    # Similar test but for points-based bounty
+    cart_id = "test_cart_id"
+    bounty_data = BountyPurchaseData(
+        id="test_bounty",
+        product_id="test_product",
+        title="Test Points Bounty",
+        description="Test Description",
+        reward_type=RewardType.POINTS,
+        reward_in_points=500,
+        status=BountyStatus.DRAFT
+    )
+    
+    # Add to cart
+    success, message = cart_service.add_bounty(cart_id, bounty_data)
+    assert success
+    
+    # Create order
+    success, message, order_id = order_service.create_from_cart(cart_id)
+    assert success
+    
+    # Process payment (points deduction)
+    success, message = order_service.process_payment(order_id)
+    assert success
+    
+    # Verify bounty creation
+    order = order_service.get_order(order_id)
+    bounty_id = order.line_items.first().metadata['bounty_id']
+    bounty = bounty_service.get_bounty(bounty_id)
+    
+    assert bounty.status == BountyStatus.FUNDED
+    assert bounty.reward_in_points == 500
+    assert bounty.product_id == "test_product"
