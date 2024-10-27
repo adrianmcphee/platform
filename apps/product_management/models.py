@@ -200,6 +200,11 @@ class Bounty(AttachmentAbstract, TimeStampMixin, models.Model, BountyPurchaseInt
     def reward_type(self) -> str:
         return self.reward_type
 
+    @property
+    def purchase_status(self) -> str:
+        """Maps the model status to purchase status"""
+        return self.status
+
 class Competition(TimeStampMixin, AttachmentAbstract):
     class CompetitionStatus(models.TextChoices):
         DRAFT = "Draft"

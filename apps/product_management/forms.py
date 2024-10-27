@@ -313,15 +313,15 @@ class BountyForm(forms.ModelForm):
 
     def clean_selected_expertise_ids(self):
         expertise_ids = self.cleaned_data.get("selected_expertise_ids")
-
         return json.loads(expertise_ids)
 
     class Meta:
         model = Bounty
-        fields = ["title", "description", "status"]
+        fields = ["title", "description"]  # Remove 'status' from here
 
         widgets = {
-            "status": forms.Select(attrs={"class": global_utils.text_field_class_names, "id": "id_bounty_status"}),
+            "title": forms.TextInput(attrs={"class": global_utils.text_field_class_names}),
+            "description": forms.Textarea(attrs={"class": global_utils.text_field_class_names}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -332,18 +332,17 @@ class BountyForm(forms.ModelForm):
                 "class": global_utils.text_field_class_names,
                 "placeholder": global_utils.placeholder(key),
             }
-            if key in ["description"]:
+            if key == "description":
                 attributes["cols"] = 40
                 attributes["rows"] = 2
 
-            if key not in ["status"]:
-                field.widget.attrs.update(**attributes)
+            field.widget.attrs.update(**attributes)
 
 
 BountyFormset = modelformset_factory(
     Bounty,
     form=BountyForm,
-    fields=("title", "description", "status"),
+    fields=("title", "description"),  # Remove status from here
     extra=0,
     can_delete=True,
 )
@@ -573,4 +572,6 @@ class ProductRoleAssignmentForm(forms.ModelForm):
                 choices=ProductRoleAssignment.ProductRoles.choices,
             ),
         }
+
+
 

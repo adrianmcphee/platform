@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict, List, Any
 from decimal import Decimal
 from apps.common.data_transfer_objects import BountyPurchaseData
 
@@ -382,6 +382,13 @@ class BountyServiceInterface(ABC):
         """Get bounty data for purchase"""
         pass
 
+class BountyPurchaseInterface:
+    """Interface for bounty purchase data"""
+    @property
+    def purchase_status(self) -> str:
+        """Get the purchase status of the bounty"""
+        pass
+
 class BountyPurchaseServiceInterface(ABC):
     @abstractmethod
     def create_purchase(self, bounty_id: str, buyer_id: str) -> Tuple[bool, str, Optional[str]]:
@@ -399,32 +406,6 @@ class BountyPurchaseServiceInterface(ABC):
     @abstractmethod
     def update_purchase_status(self, purchase_id: str, new_status: str) -> Tuple[bool, str]:
         """Update the status of a bounty purchase"""
-        pass
-
-class BountyPurchaseInterface(ABC):
-    @property
-    @abstractmethod
-    def id(self) -> str:
-        pass
-
-    @property
-    @abstractmethod
-    def status(self) -> str:
-        pass
-
-    @property
-    @abstractmethod
-    def reward_in_usd_cents(self) -> int:
-        pass
-
-    @property
-    @abstractmethod
-    def reward_in_points(self) -> int:
-        pass
-
-    @property
-    @abstractmethod
-    def reward_type(self) -> str:
         pass
 
 class BountyCreationServiceInterface(ABC):

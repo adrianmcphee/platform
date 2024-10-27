@@ -135,7 +135,10 @@ class BountySkillInline(admin.TabularInline):
 @admin.register(product.Bounty)
 class BountyAdmin(admin.ModelAdmin):
     list_display = ["title", "product", "challenge", "competition", "status", "reward_type", "reward_display"]
-    list_filter = ["status", "reward_type"]
+    list_filter = (
+        ('status', admin.ChoicesFieldListFilter),  # Fixed the filter name
+        ('reward_type', admin.ChoicesFieldListFilter),  # Fixed the filter name
+    )
     search_fields = ["title", "product__name", "challenge__title", "competition__title"]
     filter_horizontal = ["attachments"]
     inlines = [BountySkillInline]

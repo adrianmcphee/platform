@@ -2,7 +2,8 @@ from django.db import transaction
 from typing import Tuple, Optional, Dict
 import logging
 from ..interfaces import OrganisationPointGrantServiceInterface
-from ..models import OrganisationPointGrant, OrganisationPointGrantRequest, Organisation, Person, SalesOrderLineItem
+from ..models import OrganisationPointGrant, OrganisationPointGrantRequest, Organisation, SalesOrderLineItem
+from apps.talent.models import Person  # Update this import
 
 logger = logging.getLogger(__name__)
 
