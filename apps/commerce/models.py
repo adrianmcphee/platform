@@ -82,7 +82,7 @@ class Cart(TimeStampMixin):
         return f"Cart {self.id} - {self.get_status_display()}"
 
 
-class BaseLineItem(PolymorphicModel, TimeStampMixin):
+class BaseLineItem(TimeStampMixin):
     class ItemType(models.TextChoices):
         BOUNTY = "BOUNTY", "Bounty"
         PLATFORM_FEE = "PLATFORM_FEE", "Platform Fee"
@@ -435,3 +435,4 @@ class ContributorWalletTransaction(TimeStampMixin):
             self.status = self.Status.FAILED
             self.save()
             raise e
+

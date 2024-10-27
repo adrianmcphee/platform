@@ -13,13 +13,15 @@ from .models import (
     SalesOrder,
     SalesOrderLineItem,
     PointOrder,
+    ContributorPointAccount,
 )
 
-@admin.register(Organisation)
-class OrganisationAdmin(admin.ModelAdmin):
-    list_display = ("name", "country", "tax_id")
-    search_fields = ("name", "tax_id")
-    list_filter = ("country",)
+admin.site.register(Organisation)
+admin.site.register(OrganisationWallet)
+admin.site.register(Cart)
+admin.site.register(SalesOrder)
+admin.site.register(ProductPointAccount)
+admin.site.register(ContributorPointAccount)
 
 class OrganisationWalletTransactionInline(admin.TabularInline):
     model = OrganisationWalletTransaction

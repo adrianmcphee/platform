@@ -1,8 +1,0 @@
--r base.txt
-
-sendgrid==6.11.0
-sentry-sdk==2.15.0
-websockets==13.1
-whitenoise==6.7.0
-django-storages==1.14.4
-boto3==1.35.34

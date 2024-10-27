@@ -31,7 +31,6 @@ django-jinja==2.11.0
 django-js-asset==2.2.0
 django-lifecycle==1.2.4
 django-model-utils==5.0.0
-django-polymorphic==3.1.0
 django-storages==1.14.4
 django-tinymce==4.1.0
 filelock==3.16.1
@@ -64,11 +63,13 @@ PyJWT==2.9.0
 pytest==8.3.3
 pytest-cov==5.0.0
 pytest-django==4.9.0
+pytest-mock==3.14.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 python-http-client==3.3.7
 python3-openid==3.2.0
 PyYAML==6.0.2
+redis==5.2.0
 requests==2.32.3
 requests-oauthlib==2.0.0
 s3transfer==0.10.2
