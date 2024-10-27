@@ -1,5 +1,5 @@
 import pytest
-from event_hub.services.event_bus import EventBus
+from event_hub.services.event_bus import EventBus, EventLog  # Updated import
 
 @pytest.fixture
 def sample_payload():
@@ -53,4 +53,33 @@ def test_no_listener_called(mocker, sample_payload):
 
 def test_async_event_emission(mocker, sample_payload):
     """Test that async event emission is handled correctly."""
+    # Mock the delay method of celery tasks
+    mock_delay = mocker.patch('celery.app.task.Task.delay')
 
+    # Register a mock listener
+    mock_listener = mocker.Mock()
+    EventBus.register_listener('async_event', mock_listener)
+
+    # Emit the event asynchronously
+    EventBus.emit_event('async_event', sample_payload, is_async=True)
+
+    # Assert that the delay method was called
+    mock_delay.assert_called_once_with(sample_payload)
+
+    # Assert that the listener itself was not called directly
+    mock_listener.assert_not_called()
+
+def test_event_logging(sample_payload):
+    """Test that events are logged in the EventLog model."""
+    # Clear any existing event logs
+    EventLog.objects.all().delete()
+
+    # Emit an event
+    EventBus.emit_event('test_event', sample_payload)
+
+    # Check that the event was logged
+    logged_event = EventLog.objects.first()
+    assert logged_event is not None
+    assert logged_event.event_name == 'test_event'
+    assert logged_event.payload == sample_payload
+    assert logged_event.processed == False

@@ -16,13 +16,6 @@ from .models import (
     ContributorPointAccount,
 )
 
-admin.site.register(Organisation)
-admin.site.register(OrganisationWallet)
-admin.site.register(Cart)
-admin.site.register(SalesOrder)
-admin.site.register(ProductPointAccount)
-admin.site.register(ContributorPointAccount)
-
 class OrganisationWalletTransactionInline(admin.TabularInline):
     model = OrganisationWalletTransaction
     extra = 0

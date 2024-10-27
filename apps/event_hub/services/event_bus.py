@@ -1,6 +1,7 @@
 from django.conf import settings
 from celery import Celery
 from functools import wraps
+from apps.event_hub.models import EventLog  # Add this import
 
 # Initialize Celery with settings from Django
 celery_app = Celery('event_hub')
@@ -23,6 +24,9 @@ class EventBus:
 
     @classmethod
     def emit_event(cls, event_name, payload, is_async=True):
+        # Log the event
+        EventLog.objects.create(event_name=event_name, payload=payload)
+        
         if event_name in cls.listeners:
             for listener in cls.listeners[event_name]:
                 if is_async:

@@ -102,3 +102,6 @@ node_modules/
 create_superuser.py
 delete_migrations.py
 apps/staticfiles/
+
+#redis
+dump.rdb

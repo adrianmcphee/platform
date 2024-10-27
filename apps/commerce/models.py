@@ -4,7 +4,6 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 from django.db.models import Sum
 from django.utils import timezone
-from polymorphic.models import PolymorphicModel
 from apps.common.fields import Base58UUIDv5Field
 from apps.common.mixins import TimeStampMixin
 from apps.talent.models import BountyBid, Person
@@ -23,6 +22,7 @@ from apps.product_management.models import (
     Competition,
 )  # Add this import at the top of the file
 from decimal import Decimal
+from model_utils.managers import InheritanceManager
 
 import logging
 
@@ -102,6 +102,8 @@ class BaseLineItem(TimeStampMixin):
     point_grant = models.ForeignKey(
         "commerce.OrganisationPointGrant", on_delete=models.SET_NULL, null=True, blank=True, related_name="line_items"
     )
+
+    objects = InheritanceManager()
 
     class Meta:
         abstract = True
@@ -435,4 +437,6 @@ class ContributorWalletTransaction(TimeStampMixin):
             self.status = self.Status.FAILED
             self.save()
             raise e
+
+
 
