@@ -14,6 +14,15 @@
 10. Event-Driven Communication
 11. Test-Driven Development with Pytest
 12. Custom ID Generation
+13. Event-Driven State Management
+14. Metadata-Rich Transactions
+
+## Implementation Examples
+
+These principles are demonstrated in our key flows:
+
+- [Commerce Flow](commerce_flow.md) - Shows principles in action through cart-to-bounty process
+- [Additional flows to be documented...]
 
 ## Detailed Explanations
 
@@ -43,6 +52,9 @@
 - Use Event Hub for asynchronous communication
 - Employ Data Transfer Objects (DTOs) for synchronous calls
 - Example: BountyPurchaseData DTO in common/data_transfer_objects.py
+- Use metadata pattern for cross-domain transactions
+- Prefer event-driven communication for state changes
+- Example: Commerce domain creates bounties without direct Product Management dependency
 
 ### 5. Dependency Injection
 
@@ -63,6 +75,9 @@
   - Django middleware
   - Decorators
   - Event Hub for broadcasting events
+- Event bus for cross-domain state management
+- Consistent metadata patterns across transactions
+- Standardized audit trail through events
 
 ### 8. Evolutionary Architecture
 
@@ -82,6 +97,9 @@
 - Use Event Hub with Celery for asynchronous, decoupled interactions
 - Publishers emit events without knowing subscribers
 - Subscribers process events without direct coupling to publishers
+- Events represent business state changes
+- Events contain complete context for processing
+- Example: order_payment_completed contains all data needed for bounty creation
 
 ### 11. Test-Driven Development with Pytest
 
@@ -100,3 +118,19 @@
   - Security
   - Consistency
   - Performance
+
+### 13. Event-Driven State Management
+
+- Use events for state transitions between domains
+- Maintain audit trail through event history
+- Enable asynchronous processing where appropriate
+- Examples:
+  - order_payment_completed triggers bounty creation
+  - bounty_claim_status_changed triggers reward processing
+
+### 14. Metadata-Rich Transactions
+
+- Store complete transaction context in metadata
+- Preserve historical state at time of transaction
+- Enable self-contained processing without external lookups
+- Example: Cart line items contain full bounty creation data
