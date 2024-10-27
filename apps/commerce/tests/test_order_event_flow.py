@@ -212,3 +212,4 @@ class TestOrderEventFlow:
         # Verify order status updated
         order.refresh_from_db()
         assert order.status == SalesOrder.OrderStatus.PAID
+

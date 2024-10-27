@@ -7,15 +7,17 @@ from django.core.exceptions import ValidationError
 from .organisation_point_grant_service import OrganisationPointGrantService
 from apps.product_management.services.bounty_service import BountyService
 from apps.event_hub.services.event_bus import EventBus
-from apps.commerce.repositories import OrganisationRepository, DjangoOrganisationRepository
 from apps.commerce.models import SalesOrder, Cart
+from apps.product_management.services.bounty_service import BountyService
+from apps.common.data_transfer_objects import BountyPurchaseData
+
 
 logger = logging.getLogger(__name__)
 
 class SalesOrderService(SalesOrderServiceInterface):
-    def __init__(self, org_repository: Optional[OrganisationRepository] = None):
-        self.org_repository = org_repository or DjangoOrganisationRepository()
-
+    def __init__(self):
+        pass
+    
     @transaction.atomic
     def create_from_cart(self, cart_id: str) -> Tuple[bool, str]:
         try:
@@ -177,23 +179,21 @@ class SalesOrderService(SalesOrderServiceInterface):
             return False, str(e)
 
     def process_paid_items(self, order_id: str) -> Tuple[bool, str]:
-        try:
+        """Process all line items in a paid order"""
+        with transaction.atomic():
             order = SalesOrder.objects.get(id=order_id)
-            order.status = SalesOrder.OrderStatus.PAID
-            order.save()
             
-            # Process each line item
-            items = self.get_order_items(order_id)
-            for item in items:
-                if item.item_type == SalesOrderLineItem.ItemType.BOUNTY:
-                    # Process bounty creation
-                    pass
-                    
-            return True, "Order processed successfully"
-        except SalesOrder.DoesNotExist:
-            return False, "Order not found"
-        except Exception as e:
-            return False, str(e)
+            if order.status != SalesOrder.OrderStatus.PAID:
+                raise ValueError(f"Order {order_id} is not paid")
+
+            for line_item in order.line_items.all():
+                if line_item.item_type == SalesOrderLineItem.ItemType.BOUNTY:
+                    self._process_bounty_purchase(line_item)
+
+    def _process_bounty_purchase(self, line_item: SalesOrderLineItem):
+        """Process a bounty purchase line item"""
+        bounty_data = BountyPurchaseData(**line_item.metadata)
+        BountyService.create_bounty(bounty_data)
 
     def create_order(self, cart_id: str, organisation_id: str) -> Tuple[bool, str, Optional[SalesOrder]]:
         # Validate organisation exists
