@@ -181,26 +181,6 @@ class Bounty(AttachmentAbstract, TimeStampMixin, models.Model, BountyPurchaseInt
 
     # Implement BountyPurchaseInterface methods
     @property
-    def id(self) -> str:
-        return str(self.id)
-
-    @property
-    def status(self) -> str:
-        return self.status
-
-    @property
-    def reward_in_usd_cents(self) -> int:
-        return self.reward_in_usd_cents or 0
-
-    @property
-    def reward_in_points(self) -> int:
-        return self.reward_in_points or 0
-
-    @property
-    def reward_type(self) -> str:
-        return self.reward_type
-
-    @property
     def purchase_status(self) -> str:
         """Maps the model status to purchase status"""
         return self.status

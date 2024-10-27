@@ -21,7 +21,7 @@ from .forms import AddToCartForm
 
 from .services.payment_service import PaymentService
 from .services.cart_service import CartService
-from .services.order_service import OrderService
+from .services.sales_order_service import SalesOrderService
 from .services.organisation_wallet_service import OrganisationWalletService
 from .services.contributor_wallet_service import ContributorWalletService
 from .services.withdrawal_service import PayPalWithdrawalStrategy, USDTWithdrawalStrategy

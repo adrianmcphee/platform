@@ -3,6 +3,8 @@ from apps.commerce.models import Cart, SalesOrder, SalesOrderLineItem, Organisat
 from apps.commerce.services.sales_order_service import SalesOrderService
 from apps.event_hub.services.event_bus import EventBus
 from apps.common.data_transfer_objects import BountyPurchaseData
+from apps.product_management.services.bounty_service import BountyService
+from apps.product_management.models import Bounty
 
 
 @pytest.fixture
@@ -37,7 +39,7 @@ class TestOrderEventFlow:
         # Clear event listeners before each test
         EventBus.listeners = {}
 
-    def test_order_payment_completed_creates_bounty(self, mocker, sales_order_service, usd_bounty_purchase_data, test_organisation):
+    def test_order_payment_completed_creates_bounty(self, sales_order_service, usd_bounty_purchase_data, test_organisation):
         # Arrange
         cart = Cart.objects.create(
             organisation_id=test_organisation.id,
@@ -58,16 +60,32 @@ class TestOrderEventFlow:
             metadata=usd_bounty_purchase_data.model_dump(exclude={'status'})
         )
 
-        # Mock the service method
-        mock_service = mocker.patch.object(SalesOrderService, 'process_paid_items')
-        mock_service.return_value = True
-
-        # Register the handler
+        # Register the handler that will create the bounty using BountyService
         def handle_payment(payload):
             service = SalesOrderService()
-            service.process_paid_items(order_id=payload['sales_order_id'])
+            bounty_service = BountyService()
+            
+            # Get the order and line item
+            order = SalesOrder.objects.get(id=payload['sales_order_id'])
+            line_item = order.line_items.first()
+            
+            # Create bounty using BountyService
+            success, message, bounty_id = bounty_service.create_bounty_from_cart_item(
+                product_id=order.organisation.id,  # or appropriate product_id
+                cart_item_data={
+                    'metadata': line_item.metadata,
+                    'unit_price_usd_cents': line_item.unit_price_usd_cents,
+                    'unit_price_points': None
+                }
+            )
+            
+            if not success:
+                raise ValueError(f"Failed to create bounty: {message}")
 
         EventBus.register_listener('order_payment_completed', handle_payment)
+
+        # Get initial bounty count
+        initial_bounty_count = Bounty.objects.count()
 
         # Act
         EventBus.emit_event('order_payment_completed', {
@@ -75,7 +93,18 @@ class TestOrderEventFlow:
         }, is_async=False)
 
         # Assert
-        mock_service.assert_called_once_with(order_id=order.id)
+        # Verify bounty was created
+        assert Bounty.objects.count() == initial_bounty_count + 1
+        
+        # Get the created bounty
+        bounty = Bounty.objects.latest('created_at')
+        
+        # Verify bounty details match the purchase data
+        assert bounty.title == usd_bounty_purchase_data.title
+        assert bounty.description == usd_bounty_purchase_data.description
+        assert bounty.reward_type == usd_bounty_purchase_data.reward_type
+        assert bounty.reward_in_usd_cents == usd_bounty_purchase_data.reward_in_usd_cents
+        assert bounty.status == 'FUNDED'  # Note: Status should be FUNDED when created from cart
 
     def test_event_error_handling(self, mocker, sales_order_service, test_organisation):
         # Arrange
