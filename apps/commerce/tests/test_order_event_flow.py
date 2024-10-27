@@ -5,6 +5,7 @@ from apps.event_hub.services.event_bus import EventBus
 from apps.common.data_transfer_objects import BountyPurchaseData
 from apps.product_management.services.bounty_service import BountyService
 from apps.product_management.models import Bounty
+from apps.product_management.models import Product
 
 
 @pytest.fixture
@@ -21,9 +22,9 @@ def sales_order_service():
 
 
 @pytest.fixture
-def usd_bounty_purchase_data():
+def usd_bounty_purchase_data(test_product):  # Add test_product dependency here
     return BountyPurchaseData(
-        product_id='test_product_id',
+        product_id=test_product.id,  # Use the actual product ID
         title='Test Bounty',
         description='Test Description',
         reward_type='USD',
@@ -33,13 +34,23 @@ def usd_bounty_purchase_data():
     )
 
 
+@pytest.fixture
+def test_product():
+    return Product.objects.create(
+        name="Test Product",
+        short_description="Test Description",
+        full_description="Full Test Description",
+        slug="test-product"
+    )
+
+
 @pytest.mark.django_db
 class TestOrderEventFlow:
     def setUp(self):
         # Clear event listeners before each test
         EventBus.listeners = {}
 
-    def test_order_payment_completed_creates_bounty(self, sales_order_service, usd_bounty_purchase_data, test_organisation):
+    def test_order_payment_completed_creates_bounty(self, sales_order_service, usd_bounty_purchase_data, test_organisation, test_product):
         # Arrange
         cart = Cart.objects.create(
             organisation_id=test_organisation.id,
@@ -71,7 +82,7 @@ class TestOrderEventFlow:
             
             # Create bounty using BountyService
             success, message, bounty_id = bounty_service.create_bounty_from_cart_item(
-                product_id=order.organisation.id,  # or appropriate product_id
+                product_id=line_item.metadata['product_id'],  # Use product_id from metadata
                 cart_item_data={
                     'metadata': line_item.metadata,
                     'unit_price_usd_cents': line_item.unit_price_usd_cents,

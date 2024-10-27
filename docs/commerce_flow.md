@@ -34,6 +34,7 @@ sequenceDiagram
     participant SalesOrder
     participant Payment
     participant EventBus
+    participant BountyService
     participant Bounty
 
     Cart->>Cart: Add bounty with metadata
@@ -42,9 +43,8 @@ sequenceDiagram
     SalesOrder->>Payment: Process payment
     Payment->>SalesOrder: Update status to PAID
     SalesOrder->>EventBus: Emit order_payment_completed
-    EventBus->>SalesOrder: Process paid items
-    SalesOrder->>Bounty: Create bounty with FUNDED status
-    Note over Bounty: Bounty created with<br/>reward from cart metadata
+    EventBus->>BountyService: Handle payment event
+    BountyService->>Bounty: Create bounty with FUNDED status
 ```
 
 ## Process Flow

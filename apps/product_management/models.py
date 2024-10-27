@@ -139,11 +139,11 @@ class Challenge(TimeStampMixin, AttachmentAbstract):
 
 class Bounty(AttachmentAbstract, TimeStampMixin, models.Model, BountyPurchaseInterface):
     class BountyStatus(models.TextChoices):
-        FUNDED = "Funded", "Funded"
-        OPEN = "Open", "Open"
-        CLAIMED = "Claimed", "Claimed"
-        COMPLETED = "Completed", "Completed"
-        CANCELLED = "Cancelled", "Cancelled"
+        FUNDED = "FUNDED", "Funded"
+        OPEN = "OPEN", "Open"
+        CLAIMED = "CLAIMED", "Claimed"
+        COMPLETED = "COMPLETED", "Completed"
+        CANCELLED = "CANCELLED", "Cancelled"
 
     id = Base58UUIDv5Field(primary_key=True)
     product = models.ForeignKey('Product', on_delete=models.CASCADE, related_name='bounties')
