@@ -124,14 +124,14 @@ class CartServiceInterface(ABC):
         """Add a point grant request to the cart"""
         pass
 
-class OrderServiceInterface(ABC):
+class SalesOrderServiceInterface(ABC):
     @abstractmethod
     def create_from_cart(
         self,
         cart_id: str
     ) -> Tuple[bool, str, Optional[str]]:
         """
-        Create a new order from a cart
+        Create a new sales order from a cart
         
         Returns:
             Tuple of (success: bool, message: str, order_id: Optional[str])
@@ -143,7 +143,7 @@ class OrderServiceInterface(ABC):
         self,
         order_id: str
     ) -> Tuple[bool, str]:
-        """Process payment for an order"""
+        """Process payment for a sales order"""
         pass
 
     @abstractmethod

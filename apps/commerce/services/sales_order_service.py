@@ -1,14 +1,15 @@
 from django.db import transaction
 from typing import Tuple, Optional, Dict, List
 import logging
-from ..interfaces import OrderServiceInterface
-from ..models import SalesOrder, Cart, SalesOrderLineItem
+from ..interfaces import SalesOrderServiceInterface
+from ..models import SalesOrder, Cart, SalesOrderLineItem, CartLineItem
 from django.core.exceptions import ValidationError
 from .organisation_point_grant_service import OrganisationPointGrantService
+from apps.product_management.services.bounty_service import BountyService
 
 logger = logging.getLogger(__name__)
 
-class OrderService(OrderServiceInterface):
+class SalesOrderService(SalesOrderServiceInterface):
     @transaction.atomic
     def create_from_cart(self, cart_id: str) -> Tuple[bool, str]:
         try:
@@ -124,3 +125,38 @@ class OrderService(OrderServiceInterface):
                 unit_price=cart_item.unit_price,
                 # Add other fields as necessary
             )
+
+    def process_order_items(self, order_id: str) -> Tuple[bool, str]:
+        """Process items in a completed order"""
+        try:
+            with transaction.atomic():
+                sales_order = SalesOrder.objects.select_related('cart').get(id=order_id)
+                
+                if sales_order.status != SalesOrder.OrderStatus.PAID:
+                    return False, "Order is not paid"
+                    
+                bounty_service = BountyService()
+                
+                for item in sales_order.cart.line_items.filter(
+                    item_type=CartLineItem.ItemType.BOUNTY
+                ):
+                    # Create funded bounty for each bounty line item
+                    success, message, bounty_id = bounty_service.create_bounty_from_cart_item(
+                        product_id=item.metadata['product_id'],
+                        cart_item_data=item.__dict__
+                    )
+                    
+                    if not success:
+                        raise ValidationError(f"Failed to create bounty: {message}")
+                        
+                    # Update order item with bounty reference
+                    SalesOrderLineItem.objects.filter(
+                        sales_order=sales_order,
+                        cart_line_item=item
+                    ).update(bounty_id=bounty_id)
+                
+                return True, "Order items processed successfully"
+                
+        except Exception as e:
+            logger.error(f"Error processing order items: {str(e)}")
+            return False, str(e)

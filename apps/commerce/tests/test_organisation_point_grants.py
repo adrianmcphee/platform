@@ -1,7 +1,7 @@
 import pytest
 from apps.commerce.services.organisation_point_grant_service import OrganisationPointGrantService
 from apps.commerce.services.cart_service import CartService
-from apps.commerce.services.order_service import OrderService
+from apps.commerce.services.sales_order_service import SalesOrderService
 
 @pytest.fixture
 def mock_point_grant_service(mocker):
@@ -13,7 +13,7 @@ def mock_cart_service(mocker):
 
 @pytest.fixture
 def mock_order_service(mocker):
-    return mocker.Mock(spec=OrderService)
+    return mocker.Mock(spec=SalesOrderService)
 
 class TestOrganisationPointGrantRequest:
     def test_free_grant_request_requires_rationale(self, mock_point_grant_service):

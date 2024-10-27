@@ -530,3 +530,27 @@ class BountyService(BountyServiceInterface):
             reward_in_points=bounty.reward_in_points,
             status=bounty.status
         )
+
+    def create_bounty_from_cart_item(
+        self,
+        product_id: str,
+        cart_item_data: Dict
+    ) -> Tuple[bool, str, Optional[str]]:
+        """Create a bounty from cart line item data after successful checkout"""
+        try:
+            with transaction.atomic():
+                bounty = Bounty.objects.create(
+                    product_id=product_id,
+                    title=cart_item_data['metadata']['title'],
+                    description=cart_item_data['metadata']['description'],
+                    status=Bounty.BountyStatus.FUNDED,
+                    reward_type=cart_item_data['metadata']['reward_type'],
+                    reward_in_usd_cents=cart_item_data['unit_price_usd_cents'],
+                    reward_in_points=cart_item_data['unit_price_points']
+                )
+                
+                return True, "Bounty created successfully", str(bounty.id)
+                
+        except Exception as e:
+            logger.error(f"Error creating bounty from cart item: {str(e)}")
+            return False, str(e), None

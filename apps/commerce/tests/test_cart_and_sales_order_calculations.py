@@ -1,7 +1,7 @@
 import pytest
 from decimal import Decimal
 from apps.commerce.services.cart_service import CartService
-from apps.commerce.services.order_service import OrderService
+from apps.commerce.services.sales_order_service import SalesOrderService
 from apps.commerce.services.tax_service import TaxService
 from apps.commerce.services.fee_service import FeeService
 
@@ -19,7 +19,7 @@ def cart_service(mock_tax_service, mock_fee_service):
 
 @pytest.fixture
 def order_service():
-    return OrderService()
+    return SalesOrderService()
 
 @pytest.fixture
 def setup_data(mocker, cart_service, order_service):

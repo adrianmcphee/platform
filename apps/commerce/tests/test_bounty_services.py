@@ -2,7 +2,7 @@ import pytest
 from decimal import Decimal
 
 from apps.commerce.services.cart_service import CartService
-from apps.commerce.services.order_service import OrderService
+from apps.commerce.services.sales_order_service import SalesOrderService
 from apps.commerce.services.tax_service import TaxService
 from apps.commerce.services.fee_service import FeeService
 from apps.commerce.services.contributor_wallet_service import ContributorWalletService
@@ -34,28 +34,28 @@ def mock_organisation_wallet_service(mocker):
 @pytest.fixture
 def mock_bounty_service(mocker):
     mock = mocker.Mock(spec=BountyService)
-    mock.get_bounty.side_effect = lambda id: {
-        "test_bounty_id": {
+    mock.get_bounty.side_effect = lambda product_id: {
+        "test_product_id": {
             "id": "2ZEH9Uh6Yt7KPz8LCNRJ1q",
             "reward_type": "USD",
             "reward_in_usd_cents": 10000
         },
-        "test_point_bounty_id": {
+        "test_point_product_id": {
             "id": "3FGK0Vj7Zs8MPa9MDPQN2r",
             "reward_type": "POINTS",
             "reward_in_points": 500
         },
-        "usd_bounty_id": {
+        "usd_product_id": {
             "id": "4HLM1Wk8At9NQb0NEPRO3s",
             "reward_type": "USD",
             "reward_in_usd_cents": 10000
         },
-        "point_bounty_id": {
+        "point_product_id": {
             "id": "5JNO2Xl9Bu0PRc1OFQSP4t",
             "reward_type": "POINTS",
             "reward_in_points": 500
         }
-    }[id]
+    }[product_id]
     return mock
 
 @pytest.fixture
@@ -64,7 +64,7 @@ def cart_service(mock_tax_service, mock_fee_service):
 
 @pytest.fixture
 def order_service(mock_contributor_wallet_service, mock_organisation_wallet_service):
-    return OrderService(
+    return SalesOrderService(
         contributor_wallet_service=mock_contributor_wallet_service,
         organisation_wallet_service=mock_organisation_wallet_service
     )
@@ -154,3 +154,20 @@ def test_mixed_currency_bounty_cart(cart_service, mock_bounty_service):
         item['metadata']['product_id'] == "5JNO2Xl9Bu0PRc1OFQSP4t" 
         for item in cart['line_items']
     )
+
+def test_successful_point_bounty_checkout(cart_service, order_service, mock_bounty_service, mock_organisation_point_account):
+    cart_id = "8MOR5Zn2Ew3TSf4RISUP7w"
+    product_id = "test_point_product_id"
+    organisation_id = "9NPQ5Aa3Fx4UTg5SJTVQ8x"
+    
+    cart_service.add_bounty(cart_id, product_id, mock_bounty_service)
+    cart_service.update_totals(cart_id)
+    
+    order_id = order_service.create_from_cart(cart_id)
+    success = order_service.process_payment(order_id, organisation_id)
+    
+    assert success
+    mock_organisation_point_account.deduct_points.assert_called_once()
+    
+    order = order_service.get_order(order_id)
+    assert order['status'] == 'COMPLETED'
