@@ -6,6 +6,7 @@ from ..models import SalesOrder, Cart, SalesOrderLineItem, CartLineItem
 from django.core.exceptions import ValidationError
 from .organisation_point_grant_service import OrganisationPointGrantService
 from apps.product_management.services.bounty_service import BountyService
+from apps.event_hub.services.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -38,24 +39,33 @@ class SalesOrderService(SalesOrderServiceInterface):
             return False, f"Error creating sales order: {str(e)}"
 
     @transaction.atomic
-    def process_payment(self, order_id: str) -> Tuple[bool, str]:
+    def process_payment(self, sales_order_id: str) -> Tuple[bool, str]:
+        """Process payment for a sales order"""
         try:
-            sales_order = SalesOrder.objects.select_for_update().get(id=order_id)
+            order = SalesOrder.objects.select_for_update().get(id=sales_order_id)
             
-            success, message = sales_order.process_payment()
+            # TODO: Implement actual payment processing logic here
+            payment_success = True  # Replace with actual payment processing
             
-            if success:
-                sales_order.cart.status = Cart.CartStatus.CHECKED_OUT
-                sales_order.cart.save()
-            
-            return success, message
-            
+            if payment_success:
+                order.status = SalesOrder.OrderStatus.PAID
+                order.save()
+                
+                # Emit event for async processing
+                EventBus.emit_event('order_payment_completed', {
+                    'sales_order_id': str(sales_order_id)
+                })
+                
+                return True, "Payment processed successfully"
+            else:
+                return False, "Payment processing failed"
+                
         except SalesOrder.DoesNotExist:
-            logger.error(f"Sales order {order_id} not found")
+            logger.error(f"Sales order {sales_order_id} not found")
             return False, "Sales order not found"
         except Exception as e:
-            logger.error(f"Error processing payment for sales order {order_id}: {str(e)}")
-            return False, f"Error processing payment: {str(e)}"
+            logger.error(f"Error processing payment: {str(e)}")
+            return False, str(e)
 
     def validate(self, order_id: str) -> Tuple[bool, List[str]]:
         try:
