@@ -109,6 +109,7 @@ class BountyClaim(TimeStampMixin):
         ACTIVE = "Active"
         COMPLETED = "Completed"
         FAILED = "Failed"
+        CANCELLED = "Cancelled"
 
     id = Base58UUIDv5Field(primary_key=True)
     bounty = models.ForeignKey("product_management.Bounty", on_delete=models.CASCADE)
