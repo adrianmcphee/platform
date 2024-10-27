@@ -4,6 +4,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.conf import settings
 from django.db.models import Q, Prefetch
 from .fields import Base58UUIDv5Field
+from abc import ABC, ABCMeta
+from apps.commerce.interfaces import BountyPurchaseInterface
 
 
 class AttachmentAbstract(models.Model):
@@ -130,3 +132,6 @@ class TreeNode(models.Model):
         indexes = [
             models.Index(fields=['path']),
         ]
+
+class DjangoABCMeta(models.base.ModelBase, ABCMeta):
+    pass

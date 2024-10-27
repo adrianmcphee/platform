@@ -1,9 +1,10 @@
 from django.db import transaction
 from typing import Tuple, List, Optional
 import logging
-from ..interfaces import CartServiceInterface, TaxServiceInterface, FeeServiceInterface
-from ..models import Cart, CartLineItem, Bounty, OrganisationPointGrantRequest
+from ..interfaces import CartServiceInterface, TaxServiceInterface, FeeServiceInterface, BountyPurchaseInterface
+from ..models import Cart, CartLineItem, OrganisationPointGrantRequest
 from django.core.exceptions import ValidationError
+from apps.common.data_transfer_objects import BountyPurchaseData
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class CartService(CartServiceInterface):
     def add_bounty(
         self,
         cart_id: str,
-        bounty_id: str,
+        bounty_data: BountyPurchaseData,
         quantity: int = 1
     ) -> Tuple[bool, str]:
         try:
@@ -29,40 +30,32 @@ class CartService(CartServiceInterface):
                 if cart.status != Cart.CartStatus.OPEN:
                     return False, "Cart is not open"
                 
-                bounty = Bounty.objects.get(id=bounty_id)
-                
-                # Validate bounty can be added
-                if bounty.status != Bounty.BountyStatus.DRAFT:
-                    return False, "Bounty is not available for purchase"
+                if bounty_data.status != "DRAFT":
+                    return False, "Item is not available for purchase"
                     
-                # Check if bounty already in cart
-                if CartLineItem.objects.filter(cart=cart, bounty=bounty).exists():
-                    return False, "Bounty already in cart"
+                if CartLineItem.objects.filter(cart=cart, bounty_id=bounty_data.id).exists():
+                    return False, "Item already in cart"
                 
-                # Create line item
                 CartLineItem.objects.create(
                     cart=cart,
-                    bounty=bounty,
+                    bounty_id=bounty_data.id,
                     item_type=CartLineItem.ItemType.BOUNTY,
                     quantity=quantity,
-                    unit_price_usd_cents=bounty.reward_in_usd_cents,
-                    unit_price_points=bounty.reward_in_points,
-                    funding_type=bounty.reward_type
+                    unit_price_usd_cents=bounty_data.reward_in_usd_cents,
+                    unit_price_points=bounty_data.reward_in_points,
+                    funding_type=bounty_data.reward_type
                 )
                 
-                # Update totals
                 success, message = self.update_totals(cart_id)
                 if not success:
                     raise ValidationError(message)
                 
-                return True, "Bounty added to cart"
+                return True, "Item added to cart"
                 
         except Cart.DoesNotExist:
             return False, "Cart not found"
-        except Bounty.DoesNotExist:
-            return False, "Bounty not found"
         except Exception as e:
-            logger.error(f"Error adding bounty to cart: {str(e)}")
+            logger.error(f"Error adding item to cart: {str(e)}")
             return False, str(e)
 
     def update_totals(self, cart_id: str) -> Tuple[bool, str]:
@@ -138,11 +131,14 @@ class CartService(CartServiceInterface):
             
             # Validate each bounty in cart
             for item in cart.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY):
-                if not item.bounty or item.bounty.status != Bounty.BountyStatus.DRAFT:
-                    errors.append(f"Bounty {item.bounty.id if item.bounty else 'Unknown'} is not available")
+                if not item.bounty_id:
+                    errors.append(f"Invalid bounty item in cart")
                     
                 if item.quantity <= 0:
-                    errors.append(f"Invalid quantity for bounty {item.bounty.id if item.bounty else 'Unknown'}")
+                    errors.append(f"Invalid quantity for bounty {item.bounty_id}")
+                
+                if item.unit_price_usd_cents is None and item.unit_price_points is None:
+                    errors.append(f"Invalid price for bounty {item.bounty_id}")
             
             # Validate totals
             if cart.total_usd_cents_including_fees_and_taxes <= 0:

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Tuple, Optional, Dict, List
 from decimal import Decimal
+from apps.common.data_transfer_objects import BountyPurchaseData
 
 class OrganisationWalletServiceInterface(ABC):
     @abstractmethod
@@ -84,10 +85,20 @@ class CartServiceInterface(ABC):
     def add_bounty(
         self,
         cart_id: str,
-        bounty_id: str,
+        bounty_data: BountyPurchaseData,
         quantity: int = 1
     ) -> Tuple[bool, str]:
-        """Add a bounty to the cart"""
+        """
+        Add a bounty to the cart
+        
+        Args:
+            cart_id: The cart identifier
+            bounty_data: Dictionary containing bounty details (e.g., title, reward, etc.)
+            quantity: Number of bounties to add (default is 1)
+        
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
         pass
 
     @abstractmethod
@@ -118,8 +129,13 @@ class OrderServiceInterface(ABC):
     def create_from_cart(
         self,
         cart_id: str
-    ) -> Tuple[bool, str]:
-        """Create a new order from a cart"""
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Create a new order from a cart
+        
+        Returns:
+            Tuple of (success: bool, message: str, order_id: Optional[str])
+        """
         pass
 
     @abstractmethod
@@ -141,6 +157,16 @@ class OrderServiceInterface(ABC):
     @abstractmethod
     def process_paid_point_grants(self, order_id: str) -> Tuple[bool, str]:
         """Process paid point grants after successful payment"""
+        pass
+
+    @abstractmethod
+    def get_order_items(self, order_id: str) -> List[Dict]:
+        """
+        Get all items in an order
+        
+        Returns:
+            List of dictionaries containing order item details
+        """
         pass
 
 class PaymentStrategyInterface(ABC):
@@ -331,3 +357,92 @@ class PaymentServiceInterface(ABC):
         Returns (success, status, error_message)
         """
         pass
+
+class BountyServiceInterface(ABC):
+    @abstractmethod
+    def get_bounty(self, bounty_id: str) -> Optional[Dict]:
+        """Get details of a specific bounty"""
+        pass
+
+    @abstractmethod
+    def update_bounty_status(self, bounty_id: str, new_status: str) -> Tuple[bool, str]:
+        """Update the status of a bounty"""
+        pass
+
+    @abstractmethod
+    def create_bounty(self, bounty_data: Dict) -> Tuple[bool, str, Optional[str]]:
+        """
+        Create a new bounty
+        Returns (success, message, bounty_id)
+        """
+        pass
+
+    @abstractmethod
+    def get_bounty_purchase_data(self, bounty_id: str) -> BountyPurchaseData:
+        """Get bounty data for purchase"""
+        pass
+
+class BountyPurchaseServiceInterface(ABC):
+    @abstractmethod
+    def create_purchase(self, bounty_id: str, buyer_id: str) -> Tuple[bool, str, Optional[str]]:
+        """
+        Create a new bounty purchase
+        Returns (success, message, purchase_id)
+        """
+        pass
+
+    @abstractmethod
+    def get_purchase(self, purchase_id: str) -> Optional[BountyPurchaseInterface]:
+        """Get details of a specific bounty purchase"""
+        pass
+
+    @abstractmethod
+    def update_purchase_status(self, purchase_id: str, new_status: str) -> Tuple[bool, str]:
+        """Update the status of a bounty purchase"""
+        pass
+
+class BountyPurchaseInterface(ABC):
+    @property
+    @abstractmethod
+    def id(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def status(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def reward_in_usd_cents(self) -> int:
+        pass
+
+    @property
+    @abstractmethod
+    def reward_in_points(self) -> int:
+        pass
+
+    @property
+    @abstractmethod
+    def reward_type(self) -> str:
+        pass
+
+class BountyCreationServiceInterface(ABC):
+    @abstractmethod
+    def create_bounty_from_order_item(
+        self,
+        order_item_id: str,
+        bounty_data: Dict
+    ) -> Tuple[bool, str, Optional[str]]:
+        """
+        Create a bounty based on a successful order item
+        
+        Args:
+            order_item_id: The ID of the order item
+            bounty_data: Dictionary containing bounty details
+        
+        Returns:
+            Tuple of (success: bool, message: str, bounty_id: Optional[str])
+        """
+        pass
+

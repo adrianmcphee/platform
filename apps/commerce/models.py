@@ -6,7 +6,6 @@ from django.db.models import Sum
 from django.utils import timezone
 from apps.common.fields import Base58UUIDv5Field
 from apps.common.mixins import TimeStampMixin
-from apps.talent.models import BountyBid, Person
 from django.db.models import Sum
 from django.apps import apps
 from django.db import transaction
@@ -15,12 +14,6 @@ from apps.common.models import TreeNode
 from django.utils.translation import gettext_lazy as _
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from apps.product_management.models import (
-    Bounty,
-    Product,
-    Challenge,
-    Competition,
-)  # Add this import at the top of the file
 from decimal import Decimal
 from model_utils.managers import InheritanceManager
 
@@ -96,8 +89,8 @@ class BaseLineItem(TimeStampMixin):
     quantity = models.PositiveIntegerField(default=1)
     unit_price_usd_cents = models.PositiveIntegerField(null=True, blank=True)
     unit_price_points = models.PositiveIntegerField(null=True, blank=True)
-    bounty = models.ForeignKey(Bounty, on_delete=models.CASCADE, null=True, blank=True)
-    related_bounty_bid = models.ForeignKey(BountyBid, on_delete=models.SET_NULL, null=True, blank=True)
+    bounty = models.ForeignKey('product_management.Bounty', on_delete=models.CASCADE, null=True, blank=True)
+    related_bounty_bid = models.ForeignKey('talent.BountyBid', on_delete=models.SET_NULL, null=True, blank=True)
     description_text = models.TextField(blank=True, help_text="Additional description or details for this line item")
     point_grant = models.ForeignKey(
         "commerce.OrganisationPointGrant", on_delete=models.SET_NULL, null=True, blank=True, related_name="line_items"
@@ -160,7 +153,7 @@ class SalesOrderLineItem(BaseLineItem):
 
 class ProductPointAccount(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
-    product = models.OneToOneField(Product, on_delete=models.CASCADE, related_name="product_point_account")
+    product = models.OneToOneField('product_management.Product', on_delete=models.CASCADE, related_name="product_point_account")
     balance = models.PositiveIntegerField(default=0)
 
     def __str__(self):
@@ -178,7 +171,7 @@ class OrganisationPointAccount(TimeStampMixin):
 
 class ContributorPointAccount(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
-    person = models.OneToOneField(Person, on_delete=models.CASCADE, related_name="point_account")
+    person = models.OneToOneField('talent.Person', on_delete=models.CASCADE, related_name="point_account")
     balance = models.PositiveIntegerField(default=0)
 
     def __str__(self):
@@ -262,7 +255,7 @@ class OrganisationPointGrantRequest(TimeStampMixin):
     organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grant_requests")
     number_of_points = models.PositiveIntegerField()
     requested_by = models.ForeignKey(
-        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="point_grant_requests"
+        'talent.Person', on_delete=models.SET_NULL, null=True, related_name="point_grant_requests"
     )
     rationale = models.TextField()
     status = models.CharField(
@@ -289,7 +282,7 @@ class OrganisationPointGrant(TimeStampMixin):
     organisation = models.ForeignKey(Organisation, on_delete=models.CASCADE, related_name="point_grants")
     amount = models.PositiveIntegerField()
     granted_by = models.ForeignKey(
-        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="granted_points"
+        'talent.Person', on_delete=models.SET_NULL, null=True, related_name="granted_points"
     )
     rationale = models.TextField()
     grant_request = models.OneToOneField(
@@ -329,10 +322,10 @@ class OrganisationPointGrant(TimeStampMixin):
 
 class ProductPointRequest(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
-    product = models.ForeignKey("product_management.Product", on_delete=models.CASCADE, related_name="point_requests")
+    product = models.ForeignKey('product_management.Product', on_delete=models.CASCADE, related_name="point_requests")
     number_of_points = models.PositiveIntegerField()
     requested_by = models.ForeignKey(
-        "talent.Person", on_delete=models.SET_NULL, null=True, related_name="product_point_requests"
+        'talent.Person', on_delete=models.SET_NULL, null=True, related_name="product_point_requests"
     )
     status = models.CharField(
         max_length=20,
@@ -372,7 +365,7 @@ class PlatformFeeConfiguration(TimeStampMixin):
 
 class ContributorWallet(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
-    person = models.OneToOneField(Person, on_delete=models.CASCADE, related_name="wallet")
+    person = models.OneToOneField('talent.Person', on_delete=models.CASCADE, related_name="wallet")
     balance_usd_in_cents = models.IntegerField(default=0)  # Balance stored as cents for precision
 
     def __str__(self):
@@ -437,6 +430,7 @@ class ContributorWalletTransaction(TimeStampMixin):
             self.status = self.Status.FAILED
             self.save()
             raise e
+
 
 
 

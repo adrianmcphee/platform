@@ -15,6 +15,7 @@ from ..models import (
     Competition
 )
 from apps.event_hub.services.event_bus import EventBus
+from apps.common.data_transfer_objects import BountyPurchaseData
 
 logger = logging.getLogger(__name__)
 
@@ -518,3 +519,14 @@ class BountyService(BountyServiceInterface):
             "expertise": [expertise.id for expertise in bounty.expertise.all()],
         }
 
+    def get_bounty_purchase_data(self, bounty_id: str) -> BountyPurchaseData:
+        bounty = Bounty.objects.get(id=bounty_id)
+        return BountyPurchaseData(
+            id=str(bounty.id),
+            title=bounty.title,
+            description=bounty.description,
+            reward_type=bounty.reward_type,
+            reward_in_usd_cents=bounty.reward_in_usd_cents,
+            reward_in_points=bounty.reward_in_points,
+            status=bounty.status
+        )

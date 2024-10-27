@@ -10,6 +10,7 @@ from apps.common.fields import Base58UUIDv5Field
 from apps.common.models import AttachmentAbstract, TreeNode
 from apps.common.mixins import TimeStampMixin
 from apps.talent.models import Skill, Expertise
+from apps.commerce.interfaces import BountyPurchaseInterface
 
 class FileAttachment(TimeStampMixin):
     id = Base58UUIDv5Field(primary_key=True)
@@ -136,27 +137,24 @@ class Challenge(TimeStampMixin, AttachmentAbstract):
     def get_absolute_url(self):
         return reverse("challenge_detail", kwargs={"product_slug": self.product.slug, "pk": self.pk})
 
-class Bounty(TimeStampMixin, AttachmentAbstract):
+class Bounty(AttachmentAbstract, TimeStampMixin, models.Model, BountyPurchaseInterface):
     class BountyStatus(models.TextChoices):
-        NEW = "New", "New"                 # Bounty has been created but not funded yet
-        FUNDED = "Funded", "Funded"         # Bounty has received funding
-        DRAFT = "Draft", "Draft"            # Bounty is being specified, not yet open
-        OPEN = "Open", "Open"               # Bounty is open for participation
-        CLAIMED = "Claimed", "Claimed"      # Bounty has been claimed by someone for completion
-        IN_REVIEW = "In Review", "In Review" # Bounty is being reviewed
-        COMPLETED = "Completed", "Completed" # Bounty has been completed
-        CANCELLED = "Cancelled", "Cancelled" # Bounty has been cancelled
+        FUNDED = "Funded", "Funded"
+        OPEN = "Open", "Open"
+        CLAIMED = "Claimed", "Claimed"
+        COMPLETED = "Completed", "Completed"
+        CANCELLED = "Cancelled", "Cancelled"
 
     id = Base58UUIDv5Field(primary_key=True)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='bounties')
-    challenge = models.ForeignKey(Challenge, on_delete=models.SET_NULL, null=True, blank=True, related_name='bounties')
+    product = models.ForeignKey('Product', on_delete=models.CASCADE, related_name='bounties')
+    challenge = models.ForeignKey('Challenge', on_delete=models.SET_NULL, null=True, blank=True, related_name='bounties')
     competition = models.OneToOneField('Competition', on_delete=models.SET_NULL, null=True, blank=True, related_name='bounty')
     title = models.CharField(max_length=400)
     description = models.TextField()
     status = models.CharField(
         max_length=20,
         choices=BountyStatus.choices,
-        default=BountyStatus.NEW  # Default to 'New' for new bounties
+        default=BountyStatus.FUNDED
     )
     reward_type = models.CharField(max_length=10, choices=[('USD', 'USD'), ('Points', 'Points')])
     reward_in_usd_cents = models.IntegerField(null=True, blank=True)
@@ -180,7 +178,28 @@ class Bounty(TimeStampMixin, AttachmentAbstract):
             raise ValidationError("Bounty must be associated with either a Challenge or a Competition")
         if self.challenge is not None and self.competition is not None:
             raise ValidationError("Bounty cannot be associated with both a Challenge and a Competition")
-        
+
+    # Implement BountyPurchaseInterface methods
+    @property
+    def id(self) -> str:
+        return str(self.id)
+
+    @property
+    def status(self) -> str:
+        return self.status
+
+    @property
+    def reward_in_usd_cents(self) -> int:
+        return self.reward_in_usd_cents or 0
+
+    @property
+    def reward_in_points(self) -> int:
+        return self.reward_in_points or 0
+
+    @property
+    def reward_type(self) -> str:
+        return self.reward_type
+
 class Competition(TimeStampMixin, AttachmentAbstract):
     class CompetitionStatus(models.TextChoices):
         DRAFT = "Draft"
@@ -334,3 +353,4 @@ class ChallengeDependency(models.Model):
 
     def __str__(self):
         return f"{self.preceding_challenge.title} -> {self.subsequent_challenge.title}"
+
