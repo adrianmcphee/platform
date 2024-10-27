@@ -79,7 +79,7 @@ def test_add_bounty_to_cart(cart_service, mock_bounty_service):
     assert len(cart['line_items']) == 1
     assert cart['line_items'][0]['item_type'] == 'BOUNTY'
     assert cart['line_items'][0]['unit_price_usd_cents'] == 10000
-    assert cart['line_items'][0]['item_id'] == "2ZEH9Uh6Yt7KPz8LCNRJ1q"
+    assert cart['line_items'][0]['metadata']['product_id'] == "2ZEH9Uh6Yt7KPz8LCNRJ1q"
 
 def test_add_point_bounty_to_cart(cart_service, mock_bounty_service):
     cart_id = "2ZEH9Uh6Yt7KPz8LCNRJ1q"
@@ -142,5 +142,15 @@ def test_mixed_currency_bounty_cart(cart_service, mock_bounty_service):
     cart = cart_service.get_cart(cart_id)
     
     assert len(cart['line_items']) == 2
-    assert any(item['funding_type'] == 'USD' and item['unit_price_usd_cents'] == 10000 and item['item_id'] == "4HLM1Wk8At9NQb0NEPRO3s" for item in cart['line_items'])
-    assert any(item['funding_type'] == 'POINTS' and item['unit_price_points'] == 500 and item['item_id'] == "5JNO2Xl9Bu0PRc1OFQSP4t" for item in cart['line_items'])
+    assert any(
+        item['metadata']['reward_type'] == 'USD' and 
+        item['unit_price_usd_cents'] == 10000 and 
+        item['metadata']['product_id'] == "4HLM1Wk8At9NQb0NEPRO3s" 
+        for item in cart['line_items']
+    )
+    assert any(
+        item['metadata']['reward_type'] == 'POINTS' and 
+        item['unit_price_points'] == 500 and 
+        item['metadata']['product_id'] == "5JNO2Xl9Bu0PRc1OFQSP4t" 
+        for item in cart['line_items']
+    )

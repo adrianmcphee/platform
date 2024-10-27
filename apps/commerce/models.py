@@ -89,12 +89,8 @@ class BaseLineItem(TimeStampMixin):
     quantity = models.PositiveIntegerField(default=1)
     unit_price_usd_cents = models.PositiveIntegerField(null=True, blank=True)
     unit_price_points = models.PositiveIntegerField(null=True, blank=True)
-    bounty = models.ForeignKey('product_management.Bounty', on_delete=models.CASCADE, null=True, blank=True)
-    related_bounty_bid = models.ForeignKey('talent.BountyBid', on_delete=models.SET_NULL, null=True, blank=True)
     description_text = models.TextField(blank=True, help_text="Additional description or details for this line item")
-    point_grant = models.ForeignKey(
-        "commerce.OrganisationPointGrant", on_delete=models.SET_NULL, null=True, blank=True, related_name="line_items"
-    )
+    metadata = models.JSONField(default=dict, blank=True, help_text="Additional data stored as JSON")
 
     objects = InheritanceManager()
 
@@ -430,6 +426,8 @@ class ContributorWalletTransaction(TimeStampMixin):
             self.status = self.Status.FAILED
             self.save()
             raise e
+
+
 
 
 

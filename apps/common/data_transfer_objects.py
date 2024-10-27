@@ -4,6 +4,7 @@ from typing import Optional
 @dataclass
 class BountyPurchaseData:
     id: str
+    product_id: str  # Added product relationship
     title: str
     description: str
     reward_type: str

@@ -33,17 +33,26 @@ class CartService(CartServiceInterface):
                 if bounty_data.status != "DRAFT":
                     return False, "Item is not available for purchase"
                     
-                if CartLineItem.objects.filter(cart=cart, bounty_id=bounty_data.id).exists():
-                    return False, "Item already in cart"
+                # Check using metadata instead of direct field
+                if CartLineItem.objects.filter(
+                    cart=cart, 
+                    item_type=CartLineItem.ItemType.BOUNTY,
+                    metadata__product_id=bounty_data.product_id
+                ).exists():
+                    return False, "A bounty for this product is already in cart"
                 
                 CartLineItem.objects.create(
                     cart=cart,
-                    bounty_id=bounty_data.id,
                     item_type=CartLineItem.ItemType.BOUNTY,
                     quantity=quantity,
                     unit_price_usd_cents=bounty_data.reward_in_usd_cents,
                     unit_price_points=bounty_data.reward_in_points,
-                    funding_type=bounty_data.reward_type
+                    metadata={
+                        'product_id': bounty_data.product_id,
+                        'title': bounty_data.title,
+                        'description': bounty_data.description,
+                        'reward_type': bounty_data.reward_type
+                    }
                 )
                 
                 success, message = self.update_totals(cart_id)
@@ -121,26 +130,22 @@ class CartService(CartServiceInterface):
             cart = Cart.objects.get(id=cart_id)
             errors = []
             
-            # Check cart status
             if cart.status != Cart.CartStatus.OPEN:
                 errors.append("Cart is not open")
             
-            # Check cart has items
             if not cart.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY).exists():
                 errors.append("Cart has no items")
             
-            # Validate each bounty in cart
             for item in cart.line_items.filter(item_type=CartLineItem.ItemType.BOUNTY):
-                if not item.bounty_id:
-                    errors.append(f"Invalid bounty item in cart")
+                if 'product_id' not in item.metadata:
+                    errors.append("Invalid bounty item in cart")
                     
                 if item.quantity <= 0:
-                    errors.append(f"Invalid quantity for bounty {item.bounty_id}")
+                    errors.append(f"Invalid quantity for bounty {item.metadata.get('product_id')}")
                 
                 if item.unit_price_usd_cents is None and item.unit_price_points is None:
-                    errors.append(f"Invalid price for bounty {item.bounty_id}")
+                    errors.append(f"Invalid price for bounty {item.metadata.get('product_id')}")
             
-            # Validate totals
             if cart.total_usd_cents_including_fees_and_taxes <= 0:
                 errors.append("Cart total must be greater than zero")
             
