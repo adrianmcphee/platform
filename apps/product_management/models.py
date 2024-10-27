@@ -138,12 +138,14 @@ class Challenge(TimeStampMixin, AttachmentAbstract):
 
 class Bounty(TimeStampMixin, AttachmentAbstract):
     class BountyStatus(models.TextChoices):
-        DRAFT = "Draft"
-        OPEN = "Open"
-        IN_PROGRESS = "In Progress"
-        IN_REVIEW = "In Review"
-        COMPLETED = "Completed"
-        CANCELLED = "Cancelled"
+        NEW = "New", "New"                 # Bounty has been created but not funded yet
+        FUNDED = "Funded", "Funded"         # Bounty has received funding
+        DRAFT = "Draft", "Draft"            # Bounty is being specified, not yet open
+        OPEN = "Open", "Open"               # Bounty is open for participation
+        CLAIMED = "Claimed", "Claimed"      # Bounty has been claimed by someone for completion
+        IN_REVIEW = "In Review", "In Review" # Bounty is being reviewed
+        COMPLETED = "Completed", "Completed" # Bounty has been completed
+        CANCELLED = "Cancelled", "Cancelled" # Bounty has been cancelled
 
     id = Base58UUIDv5Field(primary_key=True)
     product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='bounties')
@@ -154,7 +156,7 @@ class Bounty(TimeStampMixin, AttachmentAbstract):
     status = models.CharField(
         max_length=20,
         choices=BountyStatus.choices,
-        default=BountyStatus.DRAFT
+        default=BountyStatus.NEW  # Default to 'New' for new bounties
     )
     reward_type = models.CharField(max_length=10, choices=[('USD', 'USD'), ('Points', 'Points')])
     reward_in_usd_cents = models.IntegerField(null=True, blank=True)
@@ -178,7 +180,7 @@ class Bounty(TimeStampMixin, AttachmentAbstract):
             raise ValidationError("Bounty must be associated with either a Challenge or a Competition")
         if self.challenge is not None and self.competition is not None:
             raise ValidationError("Bounty cannot be associated with both a Challenge and a Competition")
-
+        
 class Competition(TimeStampMixin, AttachmentAbstract):
     class CompetitionStatus(models.TextChoices):
         DRAFT = "Draft"

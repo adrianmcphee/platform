@@ -1,6 +1,7 @@
 from django.db.models import Avg, Count
 
-from .models import Feedback, Person
+from .models import Feedback, Person, BountyClaim
+from apps.product_management.models import Bounty
 
 
 class FeedbackService:
@@ -41,3 +42,23 @@ class FeedbackService:
         feedback_aggregates.update(stars_percentages)
 
         return feedback_aggregates
+
+
+class TalentService:
+    def handle_bounty_claim_created(self, payload):
+        person = Person.objects.get(id=payload['person_id'])
+        bounty = Bounty.objects.get(id=payload['bounty_id'])
+        BountyClaim.objects.create(
+            bounty=bounty,
+            person=person,
+            status=BountyClaim.Status.REQUESTED
+        )
+
+    def handle_bounty_claim_status_changed(self, payload):
+        claim = BountyClaim.objects.get(bounty_id=payload['bounty_id'], person_id=payload['person_id'])
+        claim.status = payload['new_status']
+        claim.save()
+
+        if payload['new_status'] == "GRANTED":
+            # Update other claims for this bounty
+            BountyClaim.objects.filter(bounty_id=payload['bounty_id']).exclude(person_id=payload['person_id']).update(status="REJECTED")

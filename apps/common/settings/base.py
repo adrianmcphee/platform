@@ -23,6 +23,7 @@ if allowed_hosts := os.environ.get("DJANGO_ALLOWED_HOSTS"):
 
 ACTUAL_APPS = [
     "apps.common",
+    'apps.event_hub',
     "apps.product_management",
     "apps.security",
     "apps.talent",

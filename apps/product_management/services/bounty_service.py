@@ -11,30 +11,36 @@ from ..interfaces import BountyServiceInterface
 from ..models import (
     Bounty,
     BountySkill,
-    Challenge
+    Challenge,
+    Competition
 )
-from ...talent.models import Person, BountyClaim
+from apps.event_hub.services.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
 class BountyService(BountyServiceInterface):
     def create_bounty(
         self,
-        challenge_id: str,
+        challenge_id: Optional[str],
+        competition_id: Optional[str],
         details: Dict,
         creator_id: str
     ) -> Tuple[bool, str, Optional[str]]:
         """Create a new bounty"""
         try:
             with transaction.atomic():
-                # Validate challenge and creator access
-                challenge = Challenge.objects.select_related('product').get(id=challenge_id)
+                # Validate challenge/competition and creator access
+                if challenge_id:
+                    challenge = Challenge.objects.select_related('product').get(id=challenge_id)
+                    product = challenge.product
+                elif competition_id:
+                    competition = Competition.objects.select_related('product').get(id=competition_id)
+                    product = competition.product
+                else:
+                    return False, "Either challenge_id or competition_id must be provided", None
                 
-                if not self._can_manage_bounty(challenge.product_id, creator_id):
+                if not self._can_manage_bounty(product.id, creator_id):
                     return False, "No permission to create bounty", None
-
-                if challenge.status not in [Challenge.ChallengeStatus.DRAFT, Challenge.ChallengeStatus.ACTIVE]:
-                    return False, "Challenge must be in Draft or Active status", None
 
                 # Validate reward details
                 reward_type = details.get('reward_type')
@@ -47,14 +53,15 @@ class BountyService(BountyServiceInterface):
 
                 # Create bounty
                 bounty = Bounty.objects.create(
-                    product=challenge.product,
-                    challenge=challenge,
+                    product=product,
+                    challenge=challenge if challenge_id else None,
+                    competition=competition if competition_id else None,
                     title=details['title'],
                     description=details['description'],
                     reward_type=reward_type,
                     reward_in_usd_cents=reward_amount if reward_type == 'USD' else None,
                     reward_in_points=reward_amount if reward_type == 'Points' else None,
-                    status=Bounty.BountyStatus.DRAFT
+                    status=Bounty.BountyStatus.NEW
                 )
 
                 # Handle skills and expertise
@@ -63,8 +70,8 @@ class BountyService(BountyServiceInterface):
 
                 return True, "Bounty created successfully", bounty.id
 
-        except Challenge.DoesNotExist:
-            return False, "Challenge not found", None
+        except (Challenge.DoesNotExist, Competition.DoesNotExist):
+            return False, "Challenge or Competition not found", None
         except Exception as e:
             logger.error(f"Error creating bounty: {str(e)}")
             return False, str(e), None
@@ -87,6 +94,10 @@ class BountyService(BountyServiceInterface):
                     return False, f"Invalid status transition from {bounty.status} to {new_status}"
 
                 # Handle status-specific logic
+                if new_status == Bounty.BountyStatus.FUNDED:
+                    if not self._validate_bounty_for_funding(bounty):
+                        return False, "Bounty not ready to be funded"
+                
                 if new_status == Bounty.BountyStatus.OPEN:
                     if not self._validate_bounty_for_opening(bounty):
                         return False, "Bounty not ready to be opened"
@@ -100,7 +111,8 @@ class BountyService(BountyServiceInterface):
                 bounty.save()
 
                 # Update challenge status if needed
-                self._update_challenge_status(bounty.challenge)
+                if bounty.challenge:
+                    self._update_challenge_status(bounty.challenge)
 
                 return True, f"Bounty status updated to {new_status}"
 
@@ -161,22 +173,30 @@ class BountyService(BountyServiceInterface):
             with transaction.atomic():
                 bounty = Bounty.objects.select_for_update().get(id=bounty_id)
                 
-                # Get claim
-                BountyClaim = apps.get_model('talent', 'BountyClaim')
-                claim = BountyClaim.objects.select_for_update().get(
-                    bounty=bounty,
-                    person_id=person_id
-                )
-
                 if action == "accept":
-                    return self._accept_claim(bounty, claim)
+                    new_status = "GRANTED"
+                    bounty_status = Bounty.BountyStatus.IN_PROGRESS
                 elif action == "reject":
-                    return self._reject_claim(bounty, claim)
+                    new_status = "REJECTED"
+                    bounty_status = Bounty.BountyStatus.OPEN
                 elif action == "withdraw":
-                    return self._withdraw_claim(bounty, claim, person_id)
+                    new_status = "CANCELLED"
+                    bounty_status = Bounty.BountyStatus.OPEN
                 else:
                     return False, "Invalid action"
 
+                # Emit an event instead of directly updating BountyClaim
+                EventBus.emit_event('bounty_claim_status_changed', {
+                    'bounty_id': bounty_id,
+                    'person_id': person_id,
+                    'new_status': new_status
+                })
+
+                # Update bounty status
+                bounty.status = bounty_status
+                bounty.save()
+
+            return True, "Claim processed successfully"
         except (Bounty.DoesNotExist, BountyClaim.DoesNotExist):
             return False, "Bounty or claim not found"
         except Exception as e:
@@ -198,27 +218,49 @@ class BountyService(BountyServiceInterface):
     def _is_valid_status_transition(self, current_status: str, new_status: str) -> bool:
         """Validate bounty status transition"""
         valid_transitions = {
+            Bounty.BountyStatus.NEW: [
+                Bounty.BountyStatus.FUNDED,
+                Bounty.BountyStatus.CANCELLED
+            ],
+            Bounty.BountyStatus.FUNDED: [
+                Bounty.BountyStatus.DRAFT,
+                Bounty.BountyStatus.CANCELLED
+            ],
             Bounty.BountyStatus.DRAFT: [
                 Bounty.BountyStatus.OPEN,
                 Bounty.BountyStatus.CANCELLED
             ],
             Bounty.BountyStatus.OPEN: [
-                Bounty.BountyStatus.IN_PROGRESS,
+                Bounty.BountyStatus.CLAIMED,
                 Bounty.BountyStatus.CANCELLED
             ],
-            Bounty.BountyStatus.IN_PROGRESS: [
+            Bounty.BountyStatus.CLAIMED: [
                 Bounty.BountyStatus.IN_REVIEW,
                 Bounty.BountyStatus.CANCELLED
             ],
             Bounty.BountyStatus.IN_REVIEW: [
                 Bounty.BountyStatus.COMPLETED,
-                Bounty.BountyStatus.IN_PROGRESS
+                Bounty.BountyStatus.CLAIMED
             ]
         }
         return new_status in valid_transitions.get(current_status, [])
 
+    def _validate_bounty_for_funding(self, bounty: Bounty) -> bool:
+        """Validate bounty can be funded"""
+        if bounty.status != Bounty.BountyStatus.NEW:
+            return False
+        if not bounty.title or not bounty.description:
+            return False
+        if bounty.reward_type == 'USD' and not bounty.reward_in_usd_cents:
+            return False
+        if bounty.reward_type == 'Points' and not bounty.reward_in_points:
+            return False
+        return True
+
     def _validate_bounty_for_opening(self, bounty: Bounty) -> bool:
         """Validate bounty can be opened"""
+        if bounty.status != Bounty.BountyStatus.DRAFT:
+            return False
         if not bounty.title or not bounty.description:
             return False
         if not bounty.skills.exists():
@@ -332,7 +374,7 @@ class BountyService(BountyServiceInterface):
         ).update(status=BountyClaim.Status.REJECTED)
 
         # Update bounty status
-        bounty.status = Bounty.BountyStatus.IN_PROGRESS
+        bounty.status = Bounty.BountyStatus.CLAIMED
         bounty.save()
 
         return True, "Claim accepted successfully"
@@ -424,23 +466,25 @@ class BountyService(BountyServiceInterface):
 
     def create_bounty_claim(self, bounty_id: str, person_id: str) -> Tuple[bool, str]:
         try:
-            bounty = Bounty.objects.get(id=bounty_id)
-            person = Person.objects.get(id=person_id)
+            with transaction.atomic():
+                bounty = Bounty.objects.select_for_update().get(id=bounty_id)
+                
+                if bounty.status != Bounty.BountyStatus.OPEN:
+                    return False, "This bounty is not available for claiming"
 
-            if bounty.status != Bounty.BountyStatus.AVAILABLE:
-                return False, "This bounty is not available for claiming"
+                # Instead of creating BountyClaim directly, emit an event
+                EventBus.emit_event('bounty_claim_created', {
+                    'bounty_id': bounty_id,
+                    'person_id': person_id
+                })
+                
+                # Update bounty status
+                bounty.status = Bounty.BountyStatus.CLAIMED
+                bounty.save()
 
-            if BountyClaim.objects.filter(bounty=bounty, person=person).exists():
-                return False, "You have already claimed this bounty"
-
-            BountyClaim.objects.create(
-                bounty=bounty,
-                person=person,
-                status=BountyClaim.Status.REQUESTED
-            )
-            return True, "Bounty claim created successfully"
-        except (Bounty.DoesNotExist, Person.DoesNotExist):
-            return False, "Bounty or person not found"
+            return True, "Bounty claim request created successfully"
+        except Bounty.DoesNotExist:
+            return False, "Bounty not found"
 
     def delete_bounty_claim(self, claim_id: str, person_id: str) -> Tuple[bool, str]:
         try:
@@ -458,3 +502,19 @@ class BountyService(BountyServiceInterface):
         # Implement the logic to get bounty claims
         # This is just a placeholder implementation
         return []
+
+    def _serialize_bounty(self, bounty: Bounty) -> Dict:
+        return {
+            "id": bounty.id,
+            "title": bounty.title,
+            "description": bounty.description,
+            "reward_type": bounty.reward_type,
+            "reward_in_usd_cents": bounty.reward_in_usd_cents,
+            "reward_in_points": bounty.reward_in_points,
+            "status": bounty.status,
+            "challenge": bounty.challenge.id if bounty.challenge else None,
+            "competition": bounty.competition.id if bounty.competition else None,
+            "skills": [skill.id for skill in bounty.skills.all()],
+            "expertise": [expertise.id for expertise in bounty.expertise.all()],
+        }
+
