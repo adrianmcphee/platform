@@ -197,6 +197,7 @@ class BountyService(BountyServiceInterface):
         action: str
     ) -> Tuple[bool, str]:
         """Process bounty claim actions"""
+        BountyClaim = apps.get_model('talent', 'BountyClaim')
         try:
             with transaction.atomic():
                 bounty = Bounty.objects.select_for_update().get(id=bounty_id)
@@ -477,6 +478,8 @@ class BountyService(BountyServiceInterface):
         details = self._serialize_bounty(bounty)
 
         if user_id:
+            Person = apps.get_model('talent', 'Person')
+            BountyClaim = apps.get_model('talent', 'BountyClaim')
             person = Person.objects.get(id=user_id)
             details.update({
                 "can_be_claimed": bounty.status == Bounty.BountyStatus.AVAILABLE and not BountyClaim.objects.filter(bounty=bounty, person=person).exists(),
@@ -515,6 +518,7 @@ class BountyService(BountyServiceInterface):
             return False, "Bounty not found"
 
     def delete_bounty_claim(self, claim_id: str, person_id: str) -> Tuple[bool, str]:
+        BountyClaim = apps.get_model('talent', 'BountyClaim')
         try:
             claim = BountyClaim.objects.get(id=claim_id, person_id=person_id)
             if claim.status != BountyClaim.Status.REQUESTED:
