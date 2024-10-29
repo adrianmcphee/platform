@@ -76,17 +76,35 @@ During payment:
 
 ### 4. Post-Payment Processing
 
-The event listener triggers:
-- Processes each bounty line item
-- Creates funded bounties via BountyService
-- Updates line items with bounty references
+When the `order_payment_completed` event is emitted, the system:
+- Processes each line item via `process_paid_order_items`
+- For bounty items:
+  ```python
+  bounty_service.create_bounty(
+      details={
+          'title': line_item.metadata['title'],
+          'description': line_item.metadata['description'],
+          'reward_type': line_item.metadata['reward_type'],
+          'reward_amount': line_item.unit_price_usd_cents,
+      },
+      skill_id=line_item.metadata['skill_id'],
+      expertise_ids=line_item.metadata['expertise_ids'],
+      product_id=line_item.metadata['product_id']
+  )
+  ```
+- Emits success/failure events:
+  - `order_processing_completed`
+  - `order_processing_failed`
 
 ### 5. Bounty Creation
 
-Final step:
-- Creates new bounty with FUNDED status
-- Copies details from cart item metadata
-- Returns bounty ID for reference
+The bounty creation process:
+- Creates bounty with FUNDED status
+- Associates skills and expertise
+- Links to product
+- Sets reward amount from payment
+- Handles both USD and Points reward types
+- Uses database transactions for consistency
 
 ## Error Handling
 
@@ -195,3 +213,20 @@ CartLineItem.objects.create(
 - JSON structure allows for flexible schema evolution
 
 This pattern ensures that all information needed to create the bounty is captured at cart creation time and remains consistent throughout the purchase process, while maintaining a clean separation between commerce and product domains.
+
+## Event Flow
+
+The system uses an event-driven architecture for processing:
+
+```mermaid
+sequenceDiagram
+    participant Payment
+    participant EventBus
+    participant OrderListener
+    participant BountyService
+    
+    Payment->>EventBus: order_payment_completed
+    EventBus->>OrderListener: process_paid_order_items
+    OrderListener->>BountyService: create_bounty()
+    OrderListener->>EventBus: order_processing_completed/failed
+```
