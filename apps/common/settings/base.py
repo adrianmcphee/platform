@@ -40,7 +40,8 @@ THIRD_PARTIES = [
     "social_django",
     "django_filters",
     "corsheaders",
-    "tinymce"
+    "tinymce",
+    "django_q"
 ]
 BUILTIN_APPS = [
     "django.contrib.admin",
@@ -267,10 +268,37 @@ if os.environ.get("SENTRY_DSN"):
         traces_sample_rate=1.0,
     )
 
-# Celery Configuration
-CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = TIME_ZONE
+
+# Django Q Configuration of Event Bus (default backend that uses postgres as broker)
+Q_CLUSTER = {
+    'name': 'openunited',
+    'workers': 4,
+    'recycle': 500,
+    'timeout': 60,
+    'compress': True,
+    'save_limit': 250,
+    'queue_limit': 500,
+    'cpu_affinity': 1,
+    'label': 'Django Q',
+    'orm': 'default'
+}
+
+# Event Bus Configuration
+EVENT_BUS = {
+    'BACKEND': 'apps.event_hub.services.backends.django_q.DjangoQBackend',
+    'LOGGING_ENABLED': True,
+}
+
+# Event Bus Configuration example for Celery
+# EVENT_BUS = {
+#     'BACKEND': 'apps.event_hub.services.backends.celery.CeleryBackend',  # Switch to Celery
+#     'LOGGING_ENABLED': True,
+# }
+
+# # Celery Configuration
+# CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+# CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+# CELERY_ACCEPT_CONTENT = ['json']
+# CELERY_TASK_SERIALIZER = 'json'
+# CELERY_RESULT_SERIALIZER = 'json'
+# CELERY_TIMEZONE = TIME_ZONE

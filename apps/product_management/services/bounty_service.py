@@ -22,57 +22,84 @@ logger = logging.getLogger(__name__)
 class BountyService(BountyServiceInterface):
     def create_bounty(
         self,
-        challenge_id: Optional[str],
-        competition_id: Optional[str],
         details: Dict,
-        creator_id: str
+        skill_id: str,
+        expertise_ids: List[str],
+        product_id: str,
+        challenge_id: Optional[str] = None,
+        competition_id: Optional[str] = None,
     ) -> Tuple[bool, str, Optional[str]]:
         """Create a new bounty"""
         try:
             with transaction.atomic():
-                # Validate challenge/competition and creator access
-                if challenge_id:
-                    challenge = Challenge.objects.select_related('product').get(id=challenge_id)
-                    product = challenge.product
-                elif competition_id:
-                    competition = Competition.objects.select_related('product').get(id=competition_id)
-                    product = competition.product
+                # Get models with correct app paths
+                Bounty = apps.get_model('product_management', 'Bounty')
+                BountySkill = apps.get_model('product_management', 'BountySkill')
+                Challenge = apps.get_model('product_management', 'Challenge')
+                Competition = apps.get_model('product_management', 'Competition')
+                Skill = apps.get_model('talent', 'Skill')
+                Product = apps.get_model('product_management', 'Product')
+
+                # Validate product exists
+                try:
+                    product = Product.objects.get(id=product_id)
+                except Product.DoesNotExist:
+                    return False, "Product not found", None
+
+                # Create bounty instance with correct field names
+                bounty_data = {
+                    'title': details['title'],
+                    'description': details['description'],
+                    'reward_type': details['reward_type'],
+                    'product': product,
+                }
+
+                # Handle reward amount based on type
+                if details['reward_type'] == 'USD':
+                    bounty_data['reward_in_usd_cents'] = details['reward_amount']
                 else:
-                    return False, "Either challenge_id or competition_id must be provided", None
-                
-                if not self._can_manage_bounty(product.id, creator_id):
-                    return False, "No permission to create bounty", None
+                    bounty_data['reward_in_points'] = details['reward_amount']
 
-                # Validate reward details
-                reward_type = details.get('reward_type')
-                if reward_type not in ['USD', 'Points']:
-                    return False, "Invalid reward type", None
+                # Only add challenge/competition if provided
+                if challenge_id:
+                    try:
+                        challenge = Challenge.objects.get(id=challenge_id)
+                        bounty_data['challenge'] = challenge
+                    except Challenge.DoesNotExist:
+                        return False, "Challenge not found", None
 
-                reward_amount = details.get('reward_amount')
-                if not reward_amount or reward_amount <= 0:
-                    return False, "Invalid reward amount", None
+                if competition_id:
+                    try:
+                        competition = Competition.objects.get(id=competition_id)
+                        bounty_data['competition'] = competition
+                    except Competition.DoesNotExist:
+                        return False, "Competition not found", None
 
-                # Create bounty
-                bounty = Bounty.objects.create(
-                    product=product,
-                    challenge=challenge if challenge_id else None,
-                    competition=competition if competition_id else None,
-                    title=details['title'],
-                    description=details['description'],
-                    reward_type=reward_type,
-                    reward_in_usd_cents=reward_amount if reward_type == 'USD' else None,
-                    reward_in_points=reward_amount if reward_type == 'Points' else None,
-                    status=Bounty.BountyStatus.NEW
-                )
+                # Create the bounty
+                bounty = Bounty.objects.create(**bounty_data)
 
-                # Handle skills and expertise
-                if skills_data := details.get('skills'):
-                    self._assign_skills(bounty, skills_data)
+                # Add skill and expertise
+                try:
+                    skill = Skill.objects.get(id=skill_id)
+                    bounty_skill = BountySkill.objects.create(
+                        bounty=bounty,
+                        skill=skill
+                    )
+
+                    if expertise_ids:
+                        Expertise = apps.get_model('talent', 'Expertise')
+                        expertise_list = Expertise.objects.filter(
+                            id__in=expertise_ids,
+                            skill=skill
+                        )
+                        if not expertise_list.exists():
+                            return False, "No valid expertise found for the specified skill", None
+                        bounty_skill.expertise.add(*expertise_list)
+                except Skill.DoesNotExist:
+                    return False, "Specified skill not found", None
 
                 return True, "Bounty created successfully", bounty.id
 
-        except (Challenge.DoesNotExist, Competition.DoesNotExist):
-            return False, "Challenge or Competition not found", None
         except Exception as e:
             logger.error(f"Error creating bounty: {str(e)}")
             return False, str(e), None

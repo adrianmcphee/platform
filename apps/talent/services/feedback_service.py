@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Tuple, Optional
+from typing import Dict, Tuple, Optional, List
 from django.db import transaction
 from django.db.models import Avg, Count
 from django.core.exceptions import ValidationError

@@ -1,4 +1,5 @@
 from django.apps import AppConfig
+from django.apps import apps
 
 
 class TalentConfig(AppConfig):
@@ -6,13 +7,13 @@ class TalentConfig(AppConfig):
     name = "apps.talent"
 
     def ready(self) -> None:
-        import apps.talent.signals
-        self.register_event_listeners()
-
-    def register_event_listeners(self):
+        from apps.talent.services.talent_service import TalentService
         from apps.event_hub.services.event_bus import EventBus
-        from .services import TalentService
-
+        
+        # Initialize services
         talent_service = TalentService()
-        EventBus.register_listener('bounty_claim_created', talent_service.handle_bounty_claim_created)
-        EventBus.register_listener('bounty_claim_status_changed', talent_service.handle_bounty_claim_status_changed)
+        event_bus = EventBus()
+        
+        # Register event listeners
+        event_bus.register_listener('bounty_claim_created', talent_service.handle_bounty_claim_created)
+        event_bus.register_listener('bounty_completed', talent_service.handle_bounty_completed)

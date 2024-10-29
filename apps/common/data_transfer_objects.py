@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_validator, ConfigDict
-from typing import Optional
+from typing import Optional, List
 from enum import Enum
 
 class RewardType(str, Enum):
@@ -14,15 +14,16 @@ class BountyStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 class BountyPurchaseData(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)  # Replace class Config with model_config
-
+    model_config = ConfigDict(use_enum_values=True)
+    
     product_id: str
     title: str
     description: str
     reward_type: RewardType
-    reward_in_usd_cents: Optional[int] = Field(None, ge=0)
-    reward_in_points: Optional[int] = Field(None, ge=0)
-    status: BountyStatus
+    reward_in_usd_cents: Optional[int] = None
+    reward_in_points: Optional[int] = None
+    skill_id: str
+    expertise_ids: List[str]
 
     @field_validator('reward_in_usd_cents', 'reward_in_points')
     @classmethod
